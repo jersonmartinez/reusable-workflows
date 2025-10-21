@@ -15,7 +15,7 @@ reusable-workflows/
 │       │   ├── deploy/    # Workflows de despliegue
 │       │   └── test/      # Workflows de pruebas
 │       ├── quality/       # Flujos de calidad de código (lint, code review)
-│       ├── security/      # Flujos de DevSecOps (SAST, DAST, dependencias)
+│       ├── security/      # Flujos de DevSecOps (SAST, DAST, documentación de dependencias)
 │       └── infrastructure/# Infraestructura como código (Terraform, Kubernetes)
 ├── docs/                  # Documentación transversal
 └── templates/             # Plantillas y ejemplos de uso
@@ -33,7 +33,7 @@ reusable-workflows/
 
 - **sast-workflow** (`.github/workflows/security/sast/sast-workflow.yml`): Análisis estático de seguridad
 - **dast-workflow**: Análisis dinámico de seguridad *(en preparación)*
-- **dependency-check-workflow** (`.github/workflows/security/dependency-check/dependabot-workflow.yml`): Verificación de vulnerabilidades en dependencias
+- **dependency-check-workflow** (`.github/workflows/dependabot-workflow.yml`): Verificación de vulnerabilidades en dependencias (documentación en `.github/workflows/security/docs/dependency-check/README.md`)
 
 ### Calidad de Código
 

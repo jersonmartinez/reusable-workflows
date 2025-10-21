@@ -197,6 +197,57 @@ jobs:
           commit_message: "chore: Configure Dependabot"
           file_pattern: .github/dependabot.yml
 
+      - name: Resumen del workflow
+        if: ${{ always() }}
+        env:
+          INPUT_SCHEDULE_INTERVAL: ${{ inputs.schedule_interval }}
+          INPUT_PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
+          INPUT_DIRECTORY: ${{ inputs.directory }}
+          INPUT_DEPENDENCY_FILE: ${{ steps.manifest.outputs.dependency_file }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          mode="Programado (configuración escrita)"
+          archivo="Generación de .github/dependabot.yml"
+
+          if [ -z "$INPUT_SCHEDULE_INTERVAL" ]; then
+            mode="Bajo demanda (escaneo inmediato)"
+            archivo="${INPUT_DEPENDENCY_FILE:-No determinado}"
+          fi
+
+          {
+            echo "## 🚀 Resumen de Dependabot"
+            echo ""
+            echo "| 🧩 Clave | Valor |"
+            echo "| --- | --- |"
+            echo "| Repositorio | \`${GITHUB_REPOSITORY}\` |"
+            echo "| Directorio | \`${INPUT_DIRECTORY}\` |"
+            echo "| Ecosistema | \`${INPUT_PACKAGE_ECOSYSTEM}\` |"
+            echo "| Modo | ${mode} |"
+            echo "| Archivo evaluado | \`${archivo}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          pr_table=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --search "author:app/dependabot" --limit 20 --json number,title,url,baseRefName --jq '
+            if length == 0 then
+              ""
+            else
+              (["| Número | Título | Rama base | URL |","| --- | --- | --- | --- |"] +
+                (map("| #" + (.number|tostring) + " | " + (.title|gsub("\\|";"\\|")) + " | " + .baseRefName + " | " + .url + " |")))
+                | join("\n")
+            end' )
+
+          {
+            echo ""
+            if [ -z "$pr_table" ]; then
+              echo "_No se encontraron PRs abiertos de Dependabot en este momento._"
+            else
+              echo "### 📬 PRs abiertos de Dependabot"
+              echo ""
+              echo "$pr_table"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # Este job se ejecuta cuando hay PRs de Dependabot y auto_approve está habilitado
   auto-approve-dependabot:
     needs: check-dependencies

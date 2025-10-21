@@ -1,14 +1,14 @@
-# Workflow Reusable de Dependabot
+# 🔁 Workflow Reusable de Dependabot
 
 Este workflow permite implementar Dependabot de forma automatizada y parametrizable en cualquier repositorio de GitHub, con la opción de ejecutarse bajo demanda o con programación.
 
-> 📍 **Ubicación:** `.github/workflows/security/dependency-check/dependabot-workflow.yml`
+> 📍 **Ubicación:** `.github/workflows/dependabot-workflow.yml`
 
-## ¿Qué es Dependabot?
+## 🤖 ¿Qué es Dependabot?
 
 Dependabot es una herramienta de GitHub que automatiza la gestión de dependencias en tu proyecto. Detecta cuando hay actualizaciones disponibles para las dependencias de tu proyecto y crea pull requests para actualizarlas.
 
-## Características del Workflow
+## ✨ Características del Workflow
 
 - **Simple y directo**: Diseñado para ser fácil de implementar y usar.
 - **Ejecución bajo demanda**: Puede ejecutarse como parte de un pipeline de CI/CD.
@@ -17,7 +17,7 @@ Dependabot es una herramienta de GitHub que automatiza la gestión de dependenci
 - **Auto-fusión**: Opción para fusionar automáticamente los PRs aprobados.
 - **Detección automática del manifiesto**: Identifica el archivo de dependencias según el ecosistema o permite definirlo manualmente.
 
-## Cómo implementar
+## 🛠️ Cómo implementar
 
 ### 1. Referencia al workflow
 
@@ -37,7 +37,7 @@ jobs:
     
   check-dependencies:
     needs: build  # Ejecutar después de la compilación
-    uses: usuario/reusable-workflows/.github/workflows/security/dependency-check/dependabot-workflow.yml@main
+    uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
     with:
       package_ecosystem: "npm"        # Ecosistema de paquetes (npm, pip, maven, etc.)
       directory: "/"                  # Directorio donde se encuentra el archivo de dependencias
@@ -58,7 +58,7 @@ on:
 
 jobs:
   dependabot:
-    uses: usuario/reusable-workflows/.github/workflows/security/dependency-check/dependabot-workflow.yml@main
+    uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
     with:
       package_ecosystem: "npm"        # Ecosistema de paquetes (npm, pip, maven, etc.)
       directory: "/"                  # Directorio donde se encuentra el archivo de dependencias
@@ -103,18 +103,28 @@ Este workflow puede funcionar de dos maneras:
 
 > 📌 **Nota:** Cuando `allow_major_versions` es `false`, el archivo de configuración añade reglas para ignorar las actualizaciones `semver-major` automáticamente.
 
+> ⚠️ **Importante:** Si programas este workflow desde varios jobs distintos del mismo repositorio, cada ejecución sobrescribirá `.github/dependabot.yml` con su propia configuración. Combina los parámetros en una sola invocación o genera el archivo manualmente si necesitas múltiples entradas simultáneas.
+
 ### 5. Solución de problemas
 
 - **No se crean PRs**: Verifica que el ecosistema y directorio sean correctos.
 - **Errores de permisos**: Asegúrate de que el workflow tenga los permisos necesarios.
 - **Problemas con auto-merge**: Verifica la configuración de protección de ramas en tu repositorio.
 
-### 4. Ejemplos de uso
+### 6. Resultado y resumen automático
+
+Al finalizar, el workflow añade un resumen en la pestaña **Summary** de la ejecución con:
+
+- Datos clave del run (repositorio, directorio, ecosistema y modo de ejecución).
+- El archivo evaluado o la confirmación de que se generó `.github/dependabot.yml`.
+- Una tabla con los PRs abiertos actualmente por `app/dependabot` (si existen) indicando número, título, rama base y URL. Si no hay PRs abiertos, lo deja señalado explícitamente.
+
+### 6. Ejemplos de uso
 
 #### Configuración básica para un proyecto Node.js
 
 ```yaml
-uses: usuario/reusable-workflows/.github/workflows/security/dependency-check/dependabot-workflow.yml@main
+uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
 with:
   package_ecosystem: "npm"
   directory: "/"
@@ -124,7 +134,7 @@ with:
 #### Configuración completa para un proyecto Python con auto-aprobación
 
 ```yaml
-uses: usuario/reusable-workflows/.github/workflows/security/dependency-check/dependabot-workflow.yml@main
+uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
 with:
   package_ecosystem: "pip"
   directory: "/"
@@ -136,16 +146,16 @@ with:
   allow_major_versions: false
 ```
 
-## Solución de problemas
+## 🧯 Solución de problemas
 
-### El workflow no crea la configuración de Dependabot
+### ❓ El workflow no crea la configuración de Dependabot
 
 Asegúrate de que el token de GitHub tenga permisos suficientes para escribir en el repositorio.
 
-### Los PRs no se aprueban automáticamente
+### ❓ Los PRs no se aprueban automáticamente
 
 Verifica que el parámetro `auto_approve` esté configurado como `true` y que el token tenga permisos para escribir en los pull requests.
 
-### Los PRs no se fusionan automáticamente
+### ❓ Los PRs no se fusionan automáticamente
 
 Asegúrate de que tanto `auto_approve` como `auto_merge` estén configurados como `true` y que el token tenga permisos para escribir en el contenido del repositorio.
