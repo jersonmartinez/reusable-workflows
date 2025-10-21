@@ -99,7 +99,7 @@ jobs:
             : > "$log_file"
 
             set +e
-            python <<'PY' >"$log_file" 2>&1
+            python <<PY >"$log_file" 2>&1
             import base64
             import json
             import os
