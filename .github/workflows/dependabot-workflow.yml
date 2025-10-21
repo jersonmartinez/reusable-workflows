@@ -112,6 +112,8 @@ jobs:
               local current_sha=""
               local filtered_file
               filtered_file=$(mktemp)
+              local match_file
+              match_file=$(mktemp)
 
               if [ -z "$config_json" ]; then
                 printf "version: 2\nupdates:\n" > "$filtered_file"
@@ -127,11 +129,17 @@ jobs:
                   existing_file=$(mktemp)
                   printf '%s' "$encoded" | tr -d '\n' | base64 --decode > "$existing_file"
 
-                  awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" '
+                  awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" -v match_file="$match_file" '
                     function flush_entry() {
                       if (entry_len == 0)
                         return
-                      if (!(eco_match && dir_match)) {
+                      if (eco_match && dir_match) {
+                        if (!match_written) {
+                          for (i = 1; i <= entry_len; ++i)
+                            print entry[i] >> match_file
+                          match_written = 1
+                        }
+                      } else {
                         for (i = 1; i <= entry_len; ++i)
                           print entry[i]
                       }
@@ -150,9 +158,9 @@ jobs:
                     {
                       if (in_entry) {
                         entry[++entry_len] = $0
-                        if ($0 ~ /^  - package-ecosystem:/ && $0 ~ "\"" eco "\"")
+                        if ($0 ~ /^  - package-ecosystem:/ && $0 ~ \"\" eco \"\"/)
                           eco_match = 1
-                        if ($0 ~ /^    directory:/ && $0 ~ "\"" dir "\"")
+                        if ($0 ~ /^    directory:/ && $0 ~ \"\" dir \"\"/)
                           dir_match = 1
                       } else {
                         print $0
@@ -166,6 +174,11 @@ jobs:
 
                   rm -f "$existing_file"
                 fi
+              fi
+
+              if [ -s "$match_file" ] && cmp -s "$match_file" "$entry_file"; then
+                rm -f "$filtered_file" "$match_file"
+                return 0
               fi
 
               local final_file
@@ -191,11 +204,11 @@ jobs:
               fi
 
               if gh api "${args[@]}" >/dev/null; then
-                rm -f "$filtered_file" "$final_file"
+                rm -f "$filtered_file" "$match_file" "$final_file"
                 return 0
               fi
 
-              rm -f "$filtered_file" "$final_file"
+              rm -f "$filtered_file" "$match_file" "$final_file"
               attempts=$((attempts + 1))
               sleep 1
             done
