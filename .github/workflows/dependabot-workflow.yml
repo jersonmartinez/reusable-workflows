@@ -88,6 +88,67 @@ jobs:
           set -euo pipefail
           mkdir -p .github
 
+          api_resource="/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml"
+
+          get_config_sha() {
+            gh api -H "Accept: application/vnd.github+json" \
+              "${api_resource}?ref=${TARGET_BRANCH}" \
+              --jq '.sha' 2>/dev/null || true
+          }
+
+          put_config_with_retry() {
+            local content_b64="$1"
+            local initial_sha="$2"
+            local message="$3"
+            local sha_try="$initial_sha"
+
+            while true; do
+              local args=(
+                -X PUT
+                "${api_resource}"
+                --raw-field "message=${message}"
+                --raw-field "content=${content_b64}"
+                --raw-field "branch=${TARGET_BRANCH}"
+              )
+              if [ -n "$sha_try" ]; then
+                args+=(--raw-field "sha=$sha_try")
+              fi
+
+              if gh api "${args[@]}" >/dev/null; then
+                return 0
+              fi
+
+              local new_sha
+              new_sha=$(get_config_sha)
+              if [ -z "$new_sha" ] || [ "$new_sha" = "$sha_try" ]; then
+                return 1
+              fi
+              sha_try="$new_sha"
+            done
+          }
+
+          delete_config_with_retry() {
+            local initial_sha="$1"
+            local message="$2"
+            local sha_try="$initial_sha"
+
+            while true; do
+              if gh api -X DELETE "${api_resource}" \
+                --raw-field "message=${message}" \
+                --raw-field "sha=$sha_try" \
+                --raw-field "branch=${TARGET_BRANCH}" >/dev/null; then
+                return 0
+              fi
+
+              local new_sha
+              new_sha=$(get_config_sha)
+              if [ -z "$new_sha" ] || [ "$new_sha" = "$sha_try" ]; then
+                return 1
+              fi
+              sha_try="$new_sha"
+            done
+          }
+
           raw_interval="${SCHEDULE_INTERVAL:-}"
           case "$raw_interval" in
             "''"|'""')
@@ -98,6 +159,7 @@ jobs:
           SCHEDULE_INTERVAL="$raw_interval"
 
           config_error=""
+          config_entry="${PACKAGE_ECOSYSTEM}:${DIRECTORY}"
           if [ -n "$SCHEDULE_INTERVAL" ]; then
             case "$SCHEDULE_INTERVAL" in
               daily|weekly|monthly|quarterly|semiannually|yearly|cron)
@@ -112,11 +174,86 @@ jobs:
                 ;;
             esac
           fi
+
+          sha=$(get_config_sha)
           if [ -z "${SCHEDULE_INTERVAL}" ]; then
             echo "Se omitió la configuración de dependabot.yml para ejecuciones bajo demanda" >> "$GITHUB_STEP_SUMMARY"
             echo "config_written=false" >> "$GITHUB_OUTPUT"
-            echo "config_entry=" >> "$GITHUB_OUTPUT"
+            echo "config_entry=${config_entry}" >> "$GITHUB_OUTPUT"
             echo "config_error=" >> "$GITHUB_OUTPUT"
+
+            if [ -n "$sha" ]; then
+              existing_content=$(gh api -H "Accept: application/vnd.github+json" \
+                "${api_resource}?ref=${TARGET_BRANCH}" \
+                --jq '.content' 2>/dev/null || true)
+
+              if [ -n "$existing_content" ]; then
+                if ! command -v base64 >/dev/null 2>&1; then
+                  echo "base64 no está disponible en el runner" >&2
+                  echo "config_error=Herramienta base64 no disponible" >> "$GITHUB_OUTPUT"
+                  exit 1
+                fi
+
+                existing_file="$RUNNER_TEMP/current_dependabot.yml"
+                filtered_file="$RUNNER_TEMP/filtered_dependabot.yml"
+
+                printf '%s' "$existing_content" | tr -d '\n' | base64 --decode > "$existing_file"
+
+                awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" '
+                  function flush_entry() {
+                    if (entry_len == 0)
+                      return
+                    if (!(eco_match && dir_match)) {
+                      for (i = 1; i <= entry_len; ++i)
+                        print entry[i]
+                    }
+                    entry_len = 0
+                    eco_match = 0
+                    dir_match = 0
+                    in_entry = 0
+                  }
+
+                  /^  - package-ecosystem:/ {
+                    flush_entry()
+                    in_entry = 1
+                    entry_len = 0
+                  }
+
+                  {
+                    if (in_entry) {
+                      entry[++entry_len] = $0
+                      if ($0 ~ /^  - package-ecosystem:/ && $0 ~ "\"" eco "\"")
+                        eco_match = 1
+                      if ($0 ~ /^    directory:/ && $0 ~ "\"" dir "\"")
+                        dir_match = 1
+                    } else {
+                      print $0
+                    }
+                  }
+
+                  END {
+                    flush_entry()
+                  }
+                ' "$existing_file" > "$filtered_file"
+
+                if ! cmp -s "$existing_file" "$filtered_file"; then
+                  if grep -q '^  - ' "$filtered_file"; then
+                    updated_b64=$(base64 < "$filtered_file" | tr -d '\n')
+                    if ! put_config_with_retry "$updated_b64" "$sha" "chore: Sincronizar configuración de Dependabot (${PACKAGE_ECOSYSTEM} ${DIRECTORY})"; then
+                      config_error="No se pudo actualizar .github/dependabot.yml"
+                      echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+                      exit 1
+                    fi
+                  else
+                    if ! delete_config_with_retry "$sha" "chore: Eliminar configuración de Dependabot sin intervalos"; then
+                      config_error="No se pudo eliminar .github/dependabot.yml"
+                      echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+                      exit 1
+                    fi
+                  fi
+                fi
+              fi
+            fi
           else
             config_file="$RUNNER_TEMP/dependabot.yml"
             {
@@ -138,10 +275,6 @@ jobs:
               } >> "$config_file"
             fi
 
-            sha=$(gh api -H "Accept: application/vnd.github+json" \
-              "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml?ref=${TARGET_BRANCH}" \
-              --jq '.sha' 2>/dev/null || true)
-
             if command -v base64 >/dev/null 2>&1; then
               content_b64=$(base64 < "$config_file" | tr -d '\n')
             else
@@ -152,41 +285,12 @@ jobs:
               exit 1
             fi
 
-            attempt_update() {
-              local current_sha="$1"
-              local args=(
-                -X PUT
-                "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml"
-                --raw-field "message=chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"
-                --raw-field "content=${content_b64}"
-                --raw-field "branch=${TARGET_BRANCH}"
-              )
-              if [ -n "$current_sha" ]; then
-                args+=(--raw-field "sha=$current_sha")
-              fi
-              gh api "${args[@]}" >/dev/null
-            }
-
-            if ! attempt_update "$sha"; then
-              refreshed_sha=$(gh api -H "Accept: application/vnd.github+json" \
-                "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml?ref=${TARGET_BRANCH}" \
-                --jq '.sha' 2>/dev/null || true)
-
-              if [ -n "$refreshed_sha" ] && [ "$refreshed_sha" != "$sha" ]; then
-                if ! attempt_update "$refreshed_sha"; then
-                  config_error="No se pudo actualizar .github/dependabot.yml"
-                  echo "config_written=false" >> "$GITHUB_OUTPUT"
-                  echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
-                  echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-                  exit 1
-                fi
-              else
-                config_error="No se pudo actualizar .github/dependabot.yml"
-                echo "config_written=false" >> "$GITHUB_OUTPUT"
-                echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
-                echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-                exit 1
-              fi
+            if ! put_config_with_retry "$content_b64" "$sha" "chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"; then
+              config_error="No se pudo actualizar .github/dependabot.yml"
+              echo "config_written=false" >> "$GITHUB_OUTPUT"
+              echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
+              echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+              exit 1
             fi
 
             echo "config_written=true" >> "$GITHUB_OUTPUT"
