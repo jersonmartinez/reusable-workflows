@@ -92,34 +92,158 @@ jobs:
               cat >> .github/dependabot.yml << 'EOF'
               ignore:
                 - dependency-name: "*"
+                env:
+                  PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
+                  DIRECTORY: ${{ inputs.directory }}
+                  SCHEDULE_INTERVAL: ${{ inputs.schedule_interval }}
+                  OPEN_PULL_REQUESTS_LIMIT: ${{ inputs.open_pull_requests_limit }}
+                  ALLOW_MAJOR_VERSIONS: ${{ inputs.allow_major_versions }}
+                  TARGET_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  GITHUB_REPOSITORY: ${{ github.repository }}
                   update-types:
-                    - "version-update:semver-major"
-          EOF
-            fi
+                  set -euo pipefail
 
-            echo "config_written=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Se omitió la configuración de dependabot.yml para ejecuciones bajo demanda" >> "$GITHUB_STEP_SUMMARY"
-            echo "config_written=false" >> "$GITHUB_OUTPUT"
-          fi
+                  if [ -z "${SCHEDULE_INTERVAL}" ]; then
+                    echo "Se omitió la configuración de dependabot.yml para ejecuciones bajo demanda" >> "$GITHUB_STEP_SUMMARY"
+                    echo "config_written=false" >> "$GITHUB_OUTPUT"
+                    echo "config_entry=" >> "$GITHUB_OUTPUT"
+                    echo "config_error=" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
 
-      - name: Resolver archivo de dependencias
-        if: ${{ inputs.schedule_interval == '' }}
-        id: manifest
-        env:
-          INPUT_MANIFEST: ${{ inputs.dependency_file_path }}
-          PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
-          DEP_DIRECTORY: ${{ inputs.directory }}
-        run: |
-          set -euo pipefail
+                    config_error=""
 
-          manifest="$INPUT_MANIFEST"
+                    log_file="$RUNNER_TEMP/dependabot_setup.log"
+                    : > "$log_file"
 
-          if [ -z "$manifest" ]; then
-            case "$PACKAGE_ECOSYSTEM" in
-              npm|yarn|pnpm)
-                manifest="package.json"
-                ;;
+                    set +e
+                    python <<'PY' 2>&1 | tee "$log_file"
+                    import base64
+                    import json
+                    import os
+                    import subprocess
+                    import sys
+                    import time
+
+                    try:
+                      import yaml  # type: ignore
+                    except ImportError:  # pragma: no cover
+                      subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "PyYAML"])
+                      import yaml  # type: ignore
+
+                    repo = os.environ["GITHUB_REPOSITORY"]
+                    branch = os.environ.get("TARGET_BRANCH") or "main"
+                    ecosystem = os.environ["PACKAGE_ECOSYSTEM"]
+                    directory = os.environ["DIRECTORY"]
+                    interval = os.environ["SCHEDULE_INTERVAL"]
+                    pr_limit = int(os.environ["OPEN_PULL_REQUESTS_LIMIT"])
+                    allow_major = os.environ["ALLOW_MAJOR_VERSIONS"].lower() == "true"
+
+                    def gh_api(args, body=None):
+                      return subprocess.run(["gh", "api", *args], input=body, text=True, capture_output=True)
+
+                    def load_config():
+                      result = gh_api([
+                        "-H", "Accept: application/vnd.github+json",
+                        f"/repos/{repo}/contents/.github/dependabot.yml?ref={branch}"
+                      ])
+
+                      if result.returncode == 0:
+                        data = json.loads(result.stdout)
+                        sha = data["sha"]
+                        content = base64.b64decode(data["content"]).decode("utf-8")
+                        config = yaml.safe_load(content) or {}
+                      else:
+                        stderr = result.stderr or ""
+                        if "404" in stderr:
+                          sha = None
+                          config = {}
+                        else:
+                          sys.stderr.write(stderr)
+                          sys.exit(result.returncode)
+
+                      config.setdefault("version", 2)
+                      config.setdefault("updates", [])
+                      return sha, config
+
+                    def build_update():
+                      update = {
+                        "package-ecosystem": ecosystem,
+                        "directory": directory,
+                        "schedule": {"interval": interval},
+                        "open-pull-requests-limit": pr_limit,
+                      }
+
+                      if not allow_major:
+                        update["ignore"] = [{
+                          "dependency-name": "*",
+                          "update-types": ["version-update:semver-major"],
+                        }]
+
+                      return update
+
+                    update_entry = build_update()
+
+                    for attempt in range(1, 6):
+                      sha, config = load_config()
+                      updates = config.get("updates", [])
+                      updates = [u for u in updates if not (
+                        u.get("package-ecosystem") == update_entry["package-ecosystem"]
+                        and u.get("directory") == update_entry["directory"]
+                      )]
+                      updates.append(update_entry)
+                      updates.sort(key=lambda u: (u.get("package-ecosystem", ""), u.get("directory", "")))
+                      config["updates"] = updates
+
+                      new_content = yaml.safe_dump(config, sort_keys=False)
+                      payload = {
+                        "message": f"chore: Configure Dependabot for {ecosystem} {directory}",
+                        "content": base64.b64encode(new_content.encode()).decode(),
+                        "branch": branch,
+                      }
+                      if sha:
+                        payload["sha"] = sha
+
+                      result = gh_api([
+                        "-X", "PUT",
+                        f"/repos/{repo}/contents/.github/dependabot.yml",
+                        "--input", "-",
+                      ], json.dumps(payload))
+
+                      if result.returncode == 0:
+                        break
+
+                      stderr = result.stderr or ""
+                      if "409" in stderr and attempt < 5:
+                        time.sleep(2)
+                        continue
+
+                      sys.stderr.write(stderr)
+                      sys.exit(result.returncode)
+                    else:
+                      sys.stderr.write("No se pudo actualizar dependabot.yml después de varios intentos\n")
+                      sys.exit(1)
+
+                    PY
+                    status=${PIPESTATUS[0]}
+                    set -e
+
+                    if [ $status -ne 0 ]; then
+                      config_error="No se pudo actualizar .github/dependabot.yml"
+                      if [ -s "$log_file" ]; then
+                        config_error="$(tail -n 10 "$log_file" | sed 's/|/-/g' | tr '\n' ' ' | sed 's/  */ /g')"
+                      fi
+                      echo "config_written=false" >> "$GITHUB_OUTPUT"
+                      echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
+                      echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+                      exit $status
+                    fi
+
+                    echo "config_written=true" >> "$GITHUB_OUTPUT"
+                    echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
+                    echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+          
               pip)
                 manifest="requirements.txt"
                 ;;
@@ -177,6 +301,7 @@ jobs:
 
           echo "Archivo de dependencias resuelto: $dependency_path" >> "$GITHUB_STEP_SUMMARY"
           echo "dependency_file=$dependency_path" >> "$GITHUB_OUTPUT"
+          echo "DEPENDENCY_FILE=$dependency_path" >> "$GITHUB_ENV"
       
       # Si no hay schedule_interval, ejecutar verificación inmediata
       - name: Run immediate dependency check
@@ -185,35 +310,41 @@ jobs:
           echo "Ejecutando verificación inmediata de dependencias"
           # Usar GitHub CLI para verificar dependencias
           gh api -X POST /repos/${{ github.repository }}/dependabot/scans \
-            -f dependency-file-path="${{ steps.manifest.outputs.dependency_file }}" \
+            -f dependency-file-path="$DEPENDENCY_FILE" \
             -f package-ecosystem="${{ inputs.package_ecosystem }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Commit Dependabot configuration
-        if: ${{ steps.setup_dependabot_config.outputs.config_written == 'true' }}
-        uses: stefanzweifel/git-auto-commit-action@v4
-        with:
-          commit_message: "chore: Configure Dependabot"
-          file_pattern: .github/dependabot.yml
 
       - name: Resumen del workflow
         if: ${{ always() }}
         env:
+          JOB_STATUS: ${{ job.status }}
           INPUT_SCHEDULE_INTERVAL: ${{ inputs.schedule_interval }}
           INPUT_PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
           INPUT_DIRECTORY: ${{ inputs.directory }}
-          INPUT_DEPENDENCY_FILE: ${{ steps.manifest.outputs.dependency_file }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIG_WRITTEN: ${{ steps.setup_dependabot_config.outputs.config_written }}
+          CONFIG_ENTRY: ${{ steps.setup_dependabot_config.outputs.config_entry }}
+          CONFIG_ERROR: ${{ steps.setup_dependabot_config.outputs.config_error }}
         run: |
           set -euo pipefail
 
-          mode="Programado (configuración escrita)"
-          archivo="Generación de .github/dependabot.yml"
+          status_icon="✅"
+          status_text="Ejecución completada"
 
-          if [ -z "$INPUT_SCHEDULE_INTERVAL" ]; then
+          if [ "${JOB_STATUS}" != "success" ]; then
+            status_icon="❌"
+            status_text="Ejecución con errores"
+          fi
+
+          dependency_file="${DEPENDENCY_FILE:-No determinado}"
+
+          if [ "${CONFIG_WRITTEN}" = "true" ]; then
+            mode="Programado (configuración escrita)"
+            archivo=".github/dependabot.yml (${CONFIG_ENTRY:-entrada registrada})"
+          else
             mode="Bajo demanda (escaneo inmediato)"
-            archivo="${INPUT_DEPENDENCY_FILE:-No determinado}"
+            archivo="$dependency_file"
           fi
 
           {
@@ -224,6 +355,7 @@ jobs:
             echo "| Repositorio | \`${GITHUB_REPOSITORY}\` |"
             echo "| Directorio | \`${INPUT_DIRECTORY}\` |"
             echo "| Ecosistema | \`${INPUT_PACKAGE_ECOSYSTEM}\` |"
+            echo "| Estado | ${status_icon} ${status_text} |"
             echo "| Modo | ${mode} |"
             echo "| Archivo evaluado | \`${archivo}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -245,6 +377,17 @@ jobs:
               echo "### 📬 PRs abiertos de Dependabot"
               echo ""
               echo "$pr_table"
+            fi
+
+            if [ "${JOB_STATUS}" != "success" ]; then
+              echo ""
+              echo "❗ **Error:** ${CONFIG_ERROR:-Revisa los logs de los pasos anteriores para más detalles.}"
+            elif [ "${CONFIG_WRITTEN}" = "true" ]; then
+              echo ""
+              echo "ℹ️ Dependabot generará PRs cuando procese esta configuración (según el intervalo definido)."
+            else
+              echo ""
+              echo "✅ Se solicitó un escaneo inmediato de dependencias para \`${dependency_file}\`."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

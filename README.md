@@ -9,41 +9,42 @@ Colección de workflows reutilizables para GitHub Actions que cubren el ciclo co
 ```
 reusable-workflows/
 ├── .github/
-│   └── workflows/         # Catálogo de workflows reutilizables por dominio
-│       ├── ci-cd/         # Integración y Despliegue Continuo
-│       │   ├── build/     # Workflows de compilación
-│       │   ├── deploy/    # Workflows de despliegue
-│       │   └── test/      # Workflows de pruebas
-│       ├── quality/       # Flujos de calidad de código (lint, code review)
-│       ├── security/      # Flujos de DevSecOps (SAST, DAST, documentación de dependencias)
-│       └── infrastructure/# Infraestructura como código (Terraform, Kubernetes)
-├── docs/                  # Documentación transversal
-└── templates/             # Plantillas y ejemplos de uso
+│   └── workflows/                 # Workflows reutilizables listos para importar
+│       ├── build-workflow.yml     # Pipeline de compilación multi-lenguaje
+│       ├── dependabot-workflow.yml# Gestión automatizada de dependencias
+│       ├── sast-workflow.yml      # Análisis estático de seguridad
+│       └── test-workflow.yml      # Ejecución de suites de pruebas
+├── docs/                          # Documentación, guías y notebooks de prueba
+│   ├── ci-cd/                     # Guías específicas de CI/CD
+│   ├── infrastructure/            # Material de infraestructura como código
+│   ├── quality/                   # Documentación de calidad de código
+│   └── security/
+│       └── dependency-check/      # Documentación del workflow de Dependabot
+├── templates/                     # Plantillas y ejemplos para consumidores
+└── LICENSE
 ```
 
 ## Workflows Disponibles
 
 ### CI/CD
 
-- **build-workflow** (`.github/workflows/ci-cd/build/build-workflow.yml`): Compilación para diferentes lenguajes y plataformas
-- **test-workflow** (`.github/workflows/ci-cd/test/test-workflow.yml`): Ejecución de pruebas unitarias, integración y e2e
-- **deploy-workflow**: Despliegue a diferentes entornos (dev, staging, prod) *(en preparación)*
+- **build-workflow** (`.github/workflows/build-workflow.yml`): Compilación para diferentes lenguajes y plataformas. Documentación relacionada en `docs/ci-cd/build/`.
+- **test-workflow** (`.github/workflows/test-workflow.yml`): Orquesta pruebas unitarias, integración y end-to-end. Guías en `docs/ci-cd/test/`.
+- **deploy-workflow**: En preparación.
 
 ### Seguridad
 
-- **sast-workflow** (`.github/workflows/security/sast/sast-workflow.yml`): Análisis estático de seguridad
-- **dast-workflow**: Análisis dinámico de seguridad *(en preparación)*
-- **dependency-check-workflow** (`.github/workflows/dependabot-workflow.yml`): Verificación de vulnerabilidades en dependencias (documentación en `.github/workflows/security/docs/dependency-check/README.md`)
+- **sast-workflow** (`.github/workflows/sast-workflow.yml`): Ejecuta análisis estático de seguridad. Referencias en `docs/security/sast/`.
+- **dependabot-workflow** (`.github/workflows/dependabot-workflow.yml`): Automatiza Dependabot con opciones de programación, auto-aprobación y resumen de PRs. Documentación oficial en `docs/security/dependency-check/README.md`.
+- **dast-workflow**: En preparación.
 
 ### Calidad de Código
 
-- **lint-workflow**: Análisis de código para diferentes lenguajes *(en preparación)*
-- **code-review-workflow**: Revisión automatizada de código *(en preparación)*
+- Workflows de lint y code review: En preparación (ver avance en `docs/quality/`).
 
 ### Infraestructura
 
-- **terraform-workflow**: Validación, planificación y aplicación de configuraciones Terraform *(en preparación)*
-- **kubernetes-workflow**: Validación y despliegue de recursos Kubernetes *(en preparación)*
+- Workflows de Terraform y Kubernetes: En preparación (consultar `docs/infrastructure/`).
 
 ## Cómo Usar
 

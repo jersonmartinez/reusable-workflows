@@ -16,6 +16,7 @@ Dependabot es una herramienta de GitHub que automatiza la gestión de dependenci
 - **Auto-aprobación**: Opción para aprobar automáticamente los PRs de Dependabot.
 - **Auto-fusión**: Opción para fusionar automáticamente los PRs aprobados.
 - **Detección automática del manifiesto**: Identifica el archivo de dependencias según el ecosistema o permite definirlo manualmente.
+- **Actualización idempotente**: Fusiona entradas en `.github/dependabot.yml` mediante la API de GitHub, evitando conflictos cuando se invoca el workflow desde varios jobs o repositorios.
 
 ## 🛠️ Cómo implementar
 
@@ -99,11 +100,13 @@ Este workflow puede funcionar de dos maneras:
 
 1. **Modo bajo demanda**: Si no especificas un `schedule_interval` (o lo dejas vacío), el workflow omite la creación del archivo `.github/dependabot.yml` y lanza un escaneo inmediato mediante la API de Dependabot. Esto es útil para integrarlo en pipelines de CI/CD sin habilitar una programación recurrente.
 
-2. **Modo programado**: Si especificas un `schedule_interval` (daily, weekly, monthly), el workflow genera el archivo `.github/dependabot.yml` con la configuración indicada para que Dependabot ejecute las verificaciones en el intervalo definido.
+2. **Modo programado**: Si especificas un `schedule_interval` (daily, weekly, monthly), el workflow genera o actualiza `.github/dependabot.yml` directamente a través de la API de GitHub. Cada invocación sustituye (o añade) la entrada correspondiente al par `package_ecosystem` + `directory`, por lo que puedes ejecutar el workflow varias veces en un mismo pipeline para cubrir diferentes rutas sin preocuparte por conflictos de git.
+
+> ℹ️ **Aclaración terminológica:** `.github/dependabot.yml` es el archivo de configuración oficial que GitHub espera para Dependabot dentro de cada repositorio consumidor. No tiene relación con el nombre del workflow que uses para invocar esta plantilla (por ejemplo, `dependabot-exec.yml`). Puedes llamar al workflow desde cualquier archivo de Actions; la salida seguirá escribiendo o actualizando `.github/dependabot.yml`, que es donde Dependabot lee su configuración.
 
 > 📌 **Nota:** Cuando `allow_major_versions` es `false`, el archivo de configuración añade reglas para ignorar las actualizaciones `semver-major` automáticamente.
 
-> ⚠️ **Importante:** Si programas este workflow desde varios jobs distintos del mismo repositorio, cada ejecución sobrescribirá `.github/dependabot.yml` con su propia configuración. Combina los parámetros en una sola invocación o genera el archivo manualmente si necesitas múltiples entradas simultáneas.
+> ⚠️ **Importante:** Cada invocación con `schedule_interval` actualiza (o reemplaza) la entrada que coincida con el par `package_ecosystem` + `directory`. Si necesitas modificar varias rutas, puedes invocar el workflow desde distintos jobs en un mismo run; cada uno añadirá o sustituirá únicamente su sección correspondiente.
 
 ### 5. Solución de problemas
 
@@ -116,8 +119,10 @@ Este workflow puede funcionar de dos maneras:
 Al finalizar, el workflow añade un resumen en la pestaña **Summary** de la ejecución con:
 
 - Datos clave del run (repositorio, directorio, ecosistema y modo de ejecución).
-- El archivo evaluado o la confirmación de que se generó `.github/dependabot.yml`.
+- Un estado visual (✅/❌) indicando si el job terminó correctamente o con errores.
+- El archivo evaluado o la confirmación de que se generó `.github/dependabot.yml` (incluyendo la entrada añadida).
 - Una tabla con los PRs abiertos actualmente por `app/dependabot` (si existen) indicando número, título, rama base y URL. Si no hay PRs abiertos, lo deja señalado explícitamente.
+- Un recordatorio de que, en modo programado, los PRs aparecerán cuando Dependabot procese la configuración (según el intervalo definido).
 
 ### 6. Ejemplos de uso
 
