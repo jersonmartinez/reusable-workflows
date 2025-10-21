@@ -240,13 +240,38 @@ jobs:
       - name: Run immediate dependency check
         if: ${{ inputs.schedule_interval == '' }}
         run: |
-          echo "Ejecutando verificación inmediata de dependencias"
-          # Usar GitHub CLI para verificar dependencias
-          gh api -X POST /repos/${{ github.repository }}/dependabot/scans \
-            -f dependency-file-path="$DEPENDENCY_FILE" \
-            -f package-ecosystem="${{ inputs.package_ecosystem }}"
+          set -euo pipefail
+
+          norm_dir="${DIRECTORY}"
+          if [ -z "$norm_dir" ] || [ "$norm_dir" = "/" ] || [ "$norm_dir" = "." ]; then
+            norm_dir="/"
+          else
+            norm_dir="/${norm_dir#/}"
+            norm_dir="${norm_dir%/}"
+            if [ -z "$norm_dir" ]; then
+              norm_dir="/"
+            fi
+          fi
+
+          echo "Solicitando actualización inmediata de Dependabot para $PACKAGE_ECOSYSTEM en $norm_dir"
+
+          if ! gh api -X POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/dependabot/updates" \
+            -f package-ecosystem="$PACKAGE_ECOSYSTEM" \
+            -f directory="$norm_dir" \
+            -f target-branch="$TARGET_BRANCH" \
+            >/dev/null; then
+            echo "No se pudo solicitar la actualización inmediata" >&2
+            exit 1
+          fi
+
+          echo "✅ Dependabot procesará una actualización inmediata para $PACKAGE_ECOSYSTEM en $norm_dir" >> "$GITHUB_STEP_SUMMARY"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
+          DIRECTORY: ${{ inputs.directory }}
+          TARGET_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
 
       - name: Resumen del workflow
         if: ${{ always() }}
