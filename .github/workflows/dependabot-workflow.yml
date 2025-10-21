@@ -129,23 +129,41 @@ jobs:
               exit 1
             fi
 
-            gh_args=(
-              -X PUT
-              "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml"
-              --raw-field "message=chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"
-              --raw-field "content=${content_b64}"
-              --raw-field "branch=${TARGET_BRANCH}"
-            )
-            if [ -n "$sha" ]; then
-              gh_args+=(--raw-field "sha=$sha")
-            fi
+            attempt_update() {
+              local current_sha="$1"
+              local args=(
+                -X PUT
+                "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml"
+                --raw-field "message=chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"
+                --raw-field "content=${content_b64}"
+                --raw-field "branch=${TARGET_BRANCH}"
+              )
+              if [ -n "$current_sha" ]; then
+                args+=(--raw-field "sha=$current_sha")
+              fi
+              gh api "${args[@]}" >/dev/null
+            }
 
-            if ! gh api "${gh_args[@]}" >/dev/null; then
-              config_error="No se pudo actualizar .github/dependabot.yml"
-              echo "config_written=false" >> "$GITHUB_OUTPUT"
-              echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
-              echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-              exit 1
+            if ! attempt_update "$sha"; then
+              refreshed_sha=$(gh api -H "Accept: application/vnd.github+json" \
+                "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml?ref=${TARGET_BRANCH}" \
+                --jq '.sha' 2>/dev/null || true)
+
+              if [ -n "$refreshed_sha" ] && [ "$refreshed_sha" != "$sha" ]; then
+                if ! attempt_update "$refreshed_sha"; then
+                  config_error="No se pudo actualizar .github/dependabot.yml"
+                  echo "config_written=false" >> "$GITHUB_OUTPUT"
+                  echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
+                  echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+                  exit 1
+                fi
+              else
+                config_error="No se pudo actualizar .github/dependabot.yml"
+                echo "config_written=false" >> "$GITHUB_OUTPUT"
+                echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
+                echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+                exit 1
+              fi
             fi
 
             echo "config_written=true" >> "$GITHUB_OUTPUT"
