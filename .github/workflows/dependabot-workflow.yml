@@ -120,11 +120,7 @@ jobs:
               --jq '.sha' 2>/dev/null || true)
 
             if command -v base64 >/dev/null 2>&1; then
-              if base64 --help 2>&1 | grep -q "-w"; then
-                content_b64=$(base64 -w0 < "$config_file")
-              else
-                content_b64=$(base64 < "$config_file" | tr -d '\n')
-              fi
+              content_b64=$(base64 < "$config_file" | tr -d '\n')
             else
               echo "base64 no está disponible en el runner" >&2
               echo "config_written=false" >> "$GITHUB_OUTPUT"
@@ -133,17 +129,18 @@ jobs:
               exit 1
             fi
 
-            sha_flag=""
+            gh_args=(
+              -X PUT
+              "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml"
+              --raw-field "message=chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"
+              --raw-field "content=${content_b64}"
+              --raw-field "branch=${TARGET_BRANCH}"
+            )
             if [ -n "$sha" ]; then
-              sha_flag="--raw-field sha=$sha"
+              gh_args+=(--raw-field "sha=$sha")
             fi
 
-            if ! gh api -X PUT \
-              "/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml" \
-              --raw-field "message=chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}" \
-              --raw-field "content=${content_b64}" \
-              --raw-field "branch=${TARGET_BRANCH}" \
-              $sha_flag >/dev/null; then
+            if ! gh api "${gh_args[@]}" >/dev/null; then
               config_error="No se pudo actualizar .github/dependabot.yml"
               echo "config_written=false" >> "$GITHUB_OUTPUT"
               echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
