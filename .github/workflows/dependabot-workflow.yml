@@ -88,7 +88,30 @@ jobs:
           set -euo pipefail
           mkdir -p .github
 
+          raw_interval="${SCHEDULE_INTERVAL:-}"
+          case "$raw_interval" in
+            "''"|'""')
+              raw_interval=""
+              ;;
+          esac
+          raw_interval=$(printf '%s' "$raw_interval" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          SCHEDULE_INTERVAL="$raw_interval"
+
           config_error=""
+          if [ -n "$SCHEDULE_INTERVAL" ]; then
+            case "$SCHEDULE_INTERVAL" in
+              daily|weekly|monthly|quarterly|semiannually|yearly|cron)
+                ;;
+              *)
+                config_error="Intervalo no válido para Dependabot: $SCHEDULE_INTERVAL"
+                echo "$config_error" >&2
+                echo "config_written=false" >> "$GITHUB_OUTPUT"
+                echo "config_entry=" >> "$GITHUB_OUTPUT"
+                echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+                exit 1
+                ;;
+            esac
+          fi
           if [ -z "${SCHEDULE_INTERVAL}" ]; then
             echo "Se omitió la configuración de dependabot.yml para ejecuciones bajo demanda" >> "$GITHUB_STEP_SUMMARY"
             echo "config_written=false" >> "$GITHUB_OUTPUT"
