@@ -118,7 +118,7 @@ jobs:
                     : > "$log_file"
 
                     set +e
-                    python <<'PY' 2>&1 | tee "$log_file"
+                    python <<'PY' >"$log_file" 2>&1
                     import base64
                     import json
                     import os
@@ -226,12 +226,15 @@ jobs:
                       sys.exit(1)
 
                     PY
-                    status=${PIPESTATUS[0]}
+                    status=$?
                     set -e
 
                     if [ $status -ne 0 ]; then
                       config_error="No se pudo actualizar .github/dependabot.yml"
                       if [ -s "$log_file" ]; then
+                        echo "--- Registro de error de dependabot.yml ---" >&2
+                        cat "$log_file" >&2
+                        echo "--- Fin del registro ---" >&2
                         config_error="$(tail -n 10 "$log_file" | sed 's/|/-/g' | tr '\n' ' ' | sed 's/  */ /g')"
                       fi
                       echo "config_written=false" >> "$GITHUB_OUTPUT"
