@@ -255,18 +255,18 @@ jobs:
 
           echo "Solicitando actualización inmediata de Dependabot para $PACKAGE_ECOSYSTEM en $norm_dir"
 
-          if ! gh api -X POST \
+          if output=$(gh api -X POST \
             -H "Accept: application/vnd.github+json" \
             "/repos/${GITHUB_REPOSITORY}/dependabot/updates" \
             -f package-ecosystem="$PACKAGE_ECOSYSTEM" \
             -f directory="$norm_dir" \
             -f target-branch="$TARGET_BRANCH" \
-            >/dev/null; then
-            echo "No se pudo solicitar la actualización inmediata" >&2
-            exit 1
+            2>&1); then
+            echo "✅ Dependabot procesará una actualización inmediata para $PACKAGE_ECOSYSTEM en $norm_dir" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$output" >&2
+            echo "⚠️ No se pudo solicitar la actualización inmediata para $PACKAGE_ECOSYSTEM en $norm_dir. Verifica que Dependabot Alerts/Updates esté habilitado y que el repositorio tenga permisos suficientes." >> "$GITHUB_STEP_SUMMARY"
           fi
-
-          echo "✅ Dependabot procesará una actualización inmediata para $PACKAGE_ECOSYSTEM en $norm_dir" >> "$GITHUB_STEP_SUMMARY"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
