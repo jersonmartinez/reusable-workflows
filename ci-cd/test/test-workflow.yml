@@ -1,0 +1,95 @@
+name: Reusable Test Workflow
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        required: true
+        type: string
+        description: 'Lenguaje de programación (java, node, python, etc.)'
+      version:
+        required: true
+        type: string
+        description: 'Versión del lenguaje'
+      test_command:
+        required: false
+        type: string
+        description: 'Comando de test personalizado'
+      working_directory:
+        required: false
+        type: string
+        default: '.'
+        description: 'Directorio de trabajo'
+      test_report_path:
+        required: false
+        type: string
+        description: 'Ruta al reporte de pruebas'
+      coverage_report_path:
+        required: false
+        type: string
+        description: 'Ruta al reporte de cobertura'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Java
+        if: ${{ inputs.language == 'java' }}
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: ${{ inputs.version }}
+          cache: 'maven'
+
+      - name: Setup Node.js
+        if: ${{ inputs.language == 'node' }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ inputs.version }}
+          cache: 'npm'
+
+      - name: Setup Python
+        if: ${{ inputs.language == 'python' }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ inputs.version }}
+          cache: 'pip'
+
+      - name: Run Java Tests
+        if: ${{ inputs.language == 'java' && inputs.test_command == '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: mvn -B test
+
+      - name: Run Node.js Tests
+        if: ${{ inputs.language == 'node' && inputs.test_command == '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: npm test
+
+      - name: Run Python Tests
+        if: ${{ inputs.language == 'python' && inputs.test_command == '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: pytest
+
+      - name: Run Custom Test Command
+        if: ${{ inputs.test_command != '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: ${{ inputs.test_command }}
+
+      - name: Upload Test Report
+        if: ${{ inputs.test_report_path != '' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-report
+          path: ${{ inputs.test_report_path }}
+          retention-days: 5
+
+      - name: Upload Coverage Report
+        if: ${{ inputs.coverage_report_path != '' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: ${{ inputs.coverage_report_path }}
+          retention-days: 5

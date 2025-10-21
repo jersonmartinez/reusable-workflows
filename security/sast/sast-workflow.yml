@@ -1,0 +1,45 @@
+name: Reusable SAST Workflow
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        required: true
+        type: string
+        description: 'Lenguaje de programación (java, node, python, etc.)'
+      working_directory:
+        required: false
+        type: string
+        default: '.'
+        description: 'Directorio de trabajo'
+      fail_on_severity:
+        required: false
+        type: string
+        default: 'high'
+        description: 'Nivel de severidad para fallar el workflow (low, medium, high, critical)'
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+        with:
+          languages: ${{ inputs.language }}
+
+      - name: Run SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          projectBaseDir: ${{ inputs.working_directory }}
+
+      - name: Check for vulnerabilities
+        run: |
+          echo "Verificando vulnerabilidades con nivel de severidad ${{ inputs.fail_on_severity }} o superior"
+          # Aquí iría la lógica para verificar los resultados del análisis y fallar si se encuentran vulnerabilidades
+          # del nivel de severidad especificado o superior

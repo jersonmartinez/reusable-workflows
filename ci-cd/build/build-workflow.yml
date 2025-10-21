@@ -1,0 +1,87 @@
+name: Reusable Build Workflow
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        required: true
+        type: string
+        description: 'Lenguaje de programación (java, node, python, etc.)'
+      version:
+        required: true
+        type: string
+        description: 'Versión del lenguaje'
+      build_command:
+        required: false
+        type: string
+        description: 'Comando de build personalizado'
+      artifact_name:
+        required: false
+        type: string
+        default: 'build-artifact'
+        description: 'Nombre del artefacto generado'
+      working_directory:
+        required: false
+        type: string
+        default: '.'
+        description: 'Directorio de trabajo'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Java
+        if: ${{ inputs.language == 'java' }}
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: ${{ inputs.version }}
+          cache: 'maven'
+
+      - name: Setup Node.js
+        if: ${{ inputs.language == 'node' }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ inputs.version }}
+          cache: 'npm'
+
+      - name: Setup Python
+        if: ${{ inputs.language == 'python' }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ inputs.version }}
+          cache: 'pip'
+
+      - name: Build with Maven
+        if: ${{ inputs.language == 'java' && inputs.build_command == '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: mvn -B package --file pom.xml
+
+      - name: Build with NPM
+        if: ${{ inputs.language == 'node' && inputs.build_command == '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build with Python
+        if: ${{ inputs.language == 'python' && inputs.build_command == '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          pip install -r requirements.txt
+          python setup.py build
+
+      - name: Custom Build Command
+        if: ${{ inputs.build_command != '' }}
+        working-directory: ${{ inputs.working_directory }}
+        run: ${{ inputs.build_command }}
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.working_directory }}/target
+          retention-days: 5

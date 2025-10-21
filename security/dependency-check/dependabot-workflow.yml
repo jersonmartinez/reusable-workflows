@@ -1,0 +1,141 @@
+name: Reusable Dependabot Workflow
+
+# Documentación del Workflow
+# =========================
+# Este workflow permite automatizar la gestión de dependencias utilizando Dependabot.
+# Características principales:
+# - Configurable para diferentes ecosistemas (npm, pip, maven, etc.)
+# - Puede ejecutarse bajo demanda o con programación
+# - Configurable para auto-aprobar y auto-fusionar actualizaciones
+# - Simple y directo para integrarse en pipelines de CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      # Parámetros de configuración general
+      package_ecosystem:
+        required: true
+        type: string
+        description: 'Ecosistema de paquetes (npm, pip, maven, docker, etc.)'
+      directory:
+        required: true
+        type: string
+        description: 'Directorio donde se encuentra el archivo de dependencias'
+      schedule_interval:
+        required: false
+        type: string
+        default: ''
+        description: 'Frecuencia de verificación (daily, weekly, monthly). Si está vacío, se ejecuta bajo demanda'
+      open_pull_requests_limit:
+        required: false
+        type: number
+        default: 10
+        description: 'Límite de PRs abiertos simultáneamente'
+      
+      # Parámetros para auto-aprobación y auto-fusión
+      auto_approve:
+        required: false
+        type: boolean
+        default: false
+        description: 'Aprobar automáticamente PRs de Dependabot'
+      auto_merge:
+        required: false
+        type: boolean
+        default: false
+        description: 'Fusionar automáticamente PRs de Dependabot'
+      
+      # Parámetros para configuración de versiones
+      allow_major_versions:
+        required: false
+        type: boolean
+        default: false
+        description: 'Permitir actualizaciones de versiones mayores'
+
+jobs:
+  check-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Dependabot configuration
+        run: |
+          mkdir -p .github
+          
+          # Crear configuración básica de Dependabot
+          if [ -z "${{ inputs.schedule_interval }}" ]; then
+            # Configuración para ejecución bajo demanda (sin programación)
+            cat > .github/dependabot.yml << EOF
+          version: 2
+          updates:
+            - package-ecosystem: "${{ inputs.package_ecosystem }}"
+              directory: "${{ inputs.directory }}"
+              schedule:
+                interval: "daily"  # Valor requerido por Dependabot, pero no se usará en modo bajo demanda
+              open-pull-requests-limit: ${{ inputs.open_pull_requests_limit }}
+              ${{ inputs.allow_major_versions == true && '' || '# ' }}allow:
+                - dependency-type: "all"
+                - update-type: "all"
+          EOF
+          else
+            # Configuración con programación
+            cat > .github/dependabot.yml << EOF
+          version: 2
+          updates:
+            - package-ecosystem: "${{ inputs.package_ecosystem }}"
+              directory: "${{ inputs.directory }}"
+              schedule:
+                interval: "${{ inputs.schedule_interval }}"
+              open-pull-requests-limit: ${{ inputs.open_pull_requests_limit }}
+              ${{ inputs.allow_major_versions == true && '' || '# ' }}allow:
+                - dependency-type: "all"
+                - update-type: "all"
+          EOF
+          fi
+      
+      # Si no hay schedule_interval, ejecutar verificación inmediata
+      - name: Run immediate dependency check
+        if: ${{ inputs.schedule_interval == '' }}
+        run: |
+          echo "Ejecutando verificación inmediata de dependencias"
+          # Usar GitHub CLI para verificar dependencias
+          gh api -X POST /repos/${{ github.repository }}/dependabot/scans \
+            -f dependency-file-path="${{ inputs.directory }}/package.json" \
+            -f package-ecosystem="${{ inputs.package_ecosystem }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Commit Dependabot configuration
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "chore: Configure Dependabot"
+          file_pattern: .github/dependabot.yml
+
+  # Este job se ejecuta cuando hay PRs de Dependabot y auto_approve está habilitado
+  auto-approve-dependabot:
+    needs: check-dependencies
+    if: ${{ inputs.auto_approve == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Auto-approve Dependabot PRs
+        uses: hmarr/auto-approve-action@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          review-message: "Auto-aprobado por el workflow de Dependabot"
+
+  # Este job se ejecuta cuando hay PRs de Dependabot y auto_merge está habilitado
+  auto-merge-dependabot:
+    needs: [check-dependencies, auto-approve-dependabot]
+    if: ${{ inputs.auto_merge == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Auto-merge Dependabot PRs
+        run: |
+          gh pr list --repo ${{ github.repository }} --author dependabot --json number,title,labels --jq '.[] | select(.labels[].name == "dependencies") | .number' | xargs -I{} gh pr merge {} --auto --merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
