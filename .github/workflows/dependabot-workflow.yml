@@ -99,7 +99,7 @@ jobs:
             : > "$log_file"
 
             set +e
-            python <<PY >"$log_file" 2>&1
+python <<'PY' >"$log_file" 2>&1
             import base64
             import json
             import os
@@ -205,8 +205,7 @@ jobs:
             else:
               sys.stderr.write("No se pudo actualizar dependabot.yml después de varios intentos\n")
               sys.exit(1)
-
-            PY
+PY
             status=$?
             set -e
             if [ $status -ne 0 ]; then
