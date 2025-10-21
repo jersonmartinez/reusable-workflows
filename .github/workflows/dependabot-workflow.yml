@@ -90,63 +90,231 @@ jobs:
 
           api_resource="/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml"
 
-          get_config_sha() {
-            gh api -H "Accept: application/vnd.github+json" \
-              "${api_resource}?ref=${TARGET_BRANCH}" \
-              --jq '.sha' 2>/dev/null || true
-          }
+          upsert_entry_in_config() {
+            local entry_file="$1"
+            local attempts=0
 
-          put_config_with_retry() {
-            local content_b64="$1"
-            local initial_sha="$2"
-            local message="$3"
-            local sha_try="$initial_sha"
+            while [ $attempts -lt 5 ]; do
+              local config_json
+              config_json=$(gh api -H "Accept: application/vnd.github+json" \
+                "${api_resource}?ref=${TARGET_BRANCH}" 2>/dev/null || true)
 
-            while true; do
+              if ! command -v base64 >/dev/null 2>&1; then
+                echo "base64 no está disponible en el runner" >&2
+                return 1
+              fi
+
+              if [ -n "$config_json" ] && ! command -v jq >/dev/null 2>&1; then
+                echo "jq no está disponible en el runner" >&2
+                return 1
+              fi
+
+              local current_sha=""
+              local filtered_file
+              filtered_file=$(mktemp)
+
+              if [ -z "$config_json" ]; then
+                printf "version: 2\nupdates:\n" > "$filtered_file"
+              else
+                current_sha=$(printf '%s' "$config_json" | jq -r '.sha // empty')
+                local encoded
+                encoded=$(printf '%s' "$config_json" | jq -r '.content // empty')
+
+                if [ -z "$encoded" ]; then
+                  printf "version: 2\nupdates:\n" > "$filtered_file"
+                else
+                  local existing_file
+                  existing_file=$(mktemp)
+                  printf '%s' "$encoded" | tr -d '\n' | base64 --decode > "$existing_file"
+
+                  awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" '
+                    function flush_entry() {
+                      if (entry_len == 0)
+                        return
+                      if (!(eco_match && dir_match)) {
+                        for (i = 1; i <= entry_len; ++i)
+                          print entry[i]
+                      }
+                      entry_len = 0
+                      eco_match = 0
+                      dir_match = 0
+                      in_entry = 0
+                    }
+
+                    /^  - package-ecosystem:/ {
+                      flush_entry()
+                      in_entry = 1
+                      entry_len = 0
+                    }
+
+                    {
+                      if (in_entry) {
+                        entry[++entry_len] = $0
+                        if ($0 ~ /^  - package-ecosystem:/ && $0 ~ "\"" eco "\"")
+                          eco_match = 1
+                        if ($0 ~ /^    directory:/ && $0 ~ "\"" dir "\"")
+                          dir_match = 1
+                      } else {
+                        print $0
+                      }
+                    }
+
+                    END {
+                      flush_entry()
+                    }
+                  ' "$existing_file" > "$filtered_file"
+
+                  rm -f "$existing_file"
+                fi
+              fi
+
+              local final_file
+              final_file=$(mktemp)
+              printf "version: 2\nupdates:\n" > "$final_file"
+              if [ -s "$filtered_file" ]; then
+                awk 'NR>2 {print}' "$filtered_file" >> "$final_file"
+              fi
+              cat "$entry_file" >> "$final_file"
+
+              local content_b64
+              content_b64=$(base64 < "$final_file" | tr -d '\n')
+
               local args=(
                 -X PUT
                 "${api_resource}"
-                --raw-field "message=${message}"
+                --raw-field "message=chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"
                 --raw-field "content=${content_b64}"
                 --raw-field "branch=${TARGET_BRANCH}"
               )
-              if [ -n "$sha_try" ]; then
-                args+=(--raw-field "sha=$sha_try")
+              if [ -n "$current_sha" ]; then
+                args+=(--raw-field "sha=${current_sha}")
               fi
 
               if gh api "${args[@]}" >/dev/null; then
+                rm -f "$filtered_file" "$final_file"
                 return 0
               fi
 
-              local new_sha
-              new_sha=$(get_config_sha)
-              if [ -z "$new_sha" ] || [ "$new_sha" = "$sha_try" ]; then
-                return 1
-              fi
-              sha_try="$new_sha"
+              rm -f "$filtered_file" "$final_file"
+              attempts=$((attempts + 1))
+              sleep 1
             done
+
+            return 1
           }
 
-          delete_config_with_retry() {
-            local initial_sha="$1"
-            local message="$2"
-            local sha_try="$initial_sha"
+          remove_entry_from_config() {
+            local attempts=0
 
-            while true; do
-              if gh api -X DELETE "${api_resource}" \
-                --raw-field "message=${message}" \
-                --raw-field "sha=$sha_try" \
-                --raw-field "branch=${TARGET_BRANCH}" >/dev/null; then
+            while [ $attempts -lt 5 ]; do
+              local config_json
+              config_json=$(gh api -H "Accept: application/vnd.github+json" \
+                "${api_resource}?ref=${TARGET_BRANCH}" 2>/dev/null || true)
+
+              if [ -z "$config_json" ]; then
                 return 0
               fi
 
-              local new_sha
-              new_sha=$(get_config_sha)
-              if [ -z "$new_sha" ] || [ "$new_sha" = "$sha_try" ]; then
+              if ! command -v jq >/dev/null 2>&1; then
+                echo "jq no está disponible en el runner" >&2
                 return 1
               fi
-              sha_try="$new_sha"
+
+              if ! command -v base64 >/dev/null 2>&1; then
+                echo "base64 no está disponible en el runner" >&2
+                return 1
+              fi
+
+              local current_sha
+              current_sha=$(printf '%s' "$config_json" | jq -r '.sha // empty')
+              local encoded
+              encoded=$(printf '%s' "$config_json" | jq -r '.content // empty')
+
+              if [ -z "$current_sha" ] || [ -z "$encoded" ]; then
+                return 0
+              fi
+
+              local existing_file
+              existing_file=$(mktemp)
+              local filtered_file
+              filtered_file=$(mktemp)
+
+              printf '%s' "$encoded" | tr -d '\n' | base64 --decode > "$existing_file"
+
+              awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" '
+                function flush_entry() {
+                  if (entry_len == 0)
+                    return
+                  if (!(eco_match && dir_match)) {
+                    for (i = 1; i <= entry_len; ++i)
+                      print entry[i]
+                  }
+                  entry_len = 0
+                  eco_match = 0
+                  dir_match = 0
+                  in_entry = 0
+                }
+
+                /^  - package-ecosystem:/ {
+                  flush_entry()
+                  in_entry = 1
+                  entry_len = 0
+                }
+
+                {
+                  if (in_entry) {
+                    entry[++entry_len] = $0
+                    if ($0 ~ /^  - package-ecosystem:/ && $0 ~ "\"" eco "\"")
+                      eco_match = 1
+                    if ($0 ~ /^    directory:/ && $0 ~ "\"" dir "\"")
+                      dir_match = 1
+                  } else {
+                    print $0
+                  }
+                }
+
+                END {
+                  flush_entry()
+                }
+              ' "$existing_file" > "$filtered_file"
+
+              if cmp -s "$existing_file" "$filtered_file"; then
+                rm -f "$existing_file" "$filtered_file"
+                return 0
+              fi
+
+              local update_message="chore: Sincronizar configuración de Dependabot (${PACKAGE_ECOSYSTEM} ${DIRECTORY})"
+
+              if grep -q '^  - ' "$filtered_file"; then
+                local updated_b64
+                updated_b64=$(base64 < "$filtered_file" | tr -d '\n')
+
+                if gh api -X PUT "${api_resource}" \
+                  --raw-field "message=${update_message}" \
+                  --raw-field "content=${updated_b64}" \
+                  --raw-field "branch=${TARGET_BRANCH}" \
+                  --raw-field "sha=${current_sha}" >/dev/null; then
+                  rm -f "$existing_file" "$filtered_file"
+                  return 0
+                fi
+              else
+                local delete_message="chore: Eliminar configuración de Dependabot sin intervalos"
+                if gh api -X DELETE "${api_resource}" \
+                  --raw-field "message=${delete_message}" \
+                  --raw-field "sha=${current_sha}" \
+                  --raw-field "branch=${TARGET_BRANCH}" >/dev/null; then
+                  rm -f "$existing_file" "$filtered_file"
+                  return 0
+                fi
+              fi
+
+              rm -f "$existing_file" "$filtered_file"
+
+              attempts=$((attempts + 1))
+              sleep 1
             done
+
+            return 1
           }
 
           raw_interval="${SCHEDULE_INTERVAL:-}"
@@ -175,96 +343,26 @@ jobs:
             esac
           fi
 
-          sha=$(get_config_sha)
           if [ -z "${SCHEDULE_INTERVAL}" ]; then
             echo "Se omitió la configuración de dependabot.yml para ejecuciones bajo demanda" >> "$GITHUB_STEP_SUMMARY"
             echo "config_written=false" >> "$GITHUB_OUTPUT"
             echo "config_entry=${config_entry}" >> "$GITHUB_OUTPUT"
             echo "config_error=" >> "$GITHUB_OUTPUT"
 
-            if [ -n "$sha" ]; then
-              existing_content=$(gh api -H "Accept: application/vnd.github+json" \
-                "${api_resource}?ref=${TARGET_BRANCH}" \
-                --jq '.content' 2>/dev/null || true)
-
-              if [ -n "$existing_content" ]; then
-                if ! command -v base64 >/dev/null 2>&1; then
-                  echo "base64 no está disponible en el runner" >&2
-                  echo "config_error=Herramienta base64 no disponible" >> "$GITHUB_OUTPUT"
-                  exit 1
-                fi
-
-                existing_file="$RUNNER_TEMP/current_dependabot.yml"
-                filtered_file="$RUNNER_TEMP/filtered_dependabot.yml"
-
-                printf '%s' "$existing_content" | tr -d '\n' | base64 --decode > "$existing_file"
-
-                awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" '
-                  function flush_entry() {
-                    if (entry_len == 0)
-                      return
-                    if (!(eco_match && dir_match)) {
-                      for (i = 1; i <= entry_len; ++i)
-                        print entry[i]
-                    }
-                    entry_len = 0
-                    eco_match = 0
-                    dir_match = 0
-                    in_entry = 0
-                  }
-
-                  /^  - package-ecosystem:/ {
-                    flush_entry()
-                    in_entry = 1
-                    entry_len = 0
-                  }
-
-                  {
-                    if (in_entry) {
-                      entry[++entry_len] = $0
-                      if ($0 ~ /^  - package-ecosystem:/ && $0 ~ "\"" eco "\"")
-                        eco_match = 1
-                      if ($0 ~ /^    directory:/ && $0 ~ "\"" dir "\"")
-                        dir_match = 1
-                    } else {
-                      print $0
-                    }
-                  }
-
-                  END {
-                    flush_entry()
-                  }
-                ' "$existing_file" > "$filtered_file"
-
-                if ! cmp -s "$existing_file" "$filtered_file"; then
-                  if grep -q '^  - ' "$filtered_file"; then
-                    updated_b64=$(base64 < "$filtered_file" | tr -d '\n')
-                    if ! put_config_with_retry "$updated_b64" "$sha" "chore: Sincronizar configuración de Dependabot (${PACKAGE_ECOSYSTEM} ${DIRECTORY})"; then
-                      config_error="No se pudo actualizar .github/dependabot.yml"
-                      echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-                      exit 1
-                    fi
-                  else
-                    if ! delete_config_with_retry "$sha" "chore: Eliminar configuración de Dependabot sin intervalos"; then
-                      config_error="No se pudo eliminar .github/dependabot.yml"
-                      echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-                      exit 1
-                    fi
-                  fi
-                fi
-              fi
+            if ! remove_entry_from_config; then
+              config_error="No se pudo sincronizar .github/dependabot.yml"
+              echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+              exit 1
             fi
           else
-            config_file="$RUNNER_TEMP/dependabot.yml"
+            entry_file="$RUNNER_TEMP/dependabot_entry.yml"
             {
-              printf "version: 2\n"
-              printf "updates:\n"
               printf "  - package-ecosystem: \"%s\"\n" "$PACKAGE_ECOSYSTEM"
               printf "    directory: \"%s\"\n" "$DIRECTORY"
               printf "    schedule:\n"
               printf "      interval: \"%s\"\n" "$SCHEDULE_INTERVAL"
               printf "    open-pull-requests-limit: %s\n" "$OPEN_PULL_REQUESTS_LIMIT"
-            } > "$config_file"
+            } > "$entry_file"
 
             if [ "${ALLOW_MAJOR_VERSIONS}" != "true" ]; then
               {
@@ -272,27 +370,19 @@ jobs:
                 printf "      - dependency-name: \"*\"\n"
                 printf "        update-types:\n"
                 printf "          - version-update:semver-major\n"
-              } >> "$config_file"
+              } >> "$entry_file"
             fi
 
-            if command -v base64 >/dev/null 2>&1; then
-              content_b64=$(base64 < "$config_file" | tr -d '\n')
-            else
-              echo "base64 no está disponible en el runner" >&2
-              echo "config_written=false" >> "$GITHUB_OUTPUT"
-              echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
-              echo "config_error=Herramienta base64 no disponible" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
-
-            if ! put_config_with_retry "$content_b64" "$sha" "chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"; then
+            if ! upsert_entry_in_config "$entry_file"; then
               config_error="No se pudo actualizar .github/dependabot.yml"
               echo "config_written=false" >> "$GITHUB_OUTPUT"
               echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
               echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
+              rm -f "$entry_file"
               exit 1
             fi
 
+            rm -f "$entry_file"
             echo "config_written=true" >> "$GITHUB_OUTPUT"
             echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
             echo "config_error=" >> "$GITHUB_OUTPUT"
