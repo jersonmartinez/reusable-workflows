@@ -1,0 +1,245 @@
+name: Reusable Dependabot Workflow
+
+# Documentación del Workflow
+# =========================
+# Este workflow permite automatizar la gestión de dependencias utilizando Dependabot.
+# Características principales:
+# - Configurable para diferentes ecosistemas (npm, pip, maven, etc.)
+# - Puede ejecutarse bajo demanda o con programación
+# - Configurable para auto-aprobar y auto-fusionar actualizaciones
+# - Simple y directo para integrarse en pipelines de CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      # Parámetros de configuración general
+      package_ecosystem:
+        required: true
+        type: string
+        description: 'Ecosistema de paquetes (npm, pip, maven, docker, etc.)'
+      directory:
+        required: true
+        type: string
+        description: 'Directorio donde se encuentra el archivo de dependencias'
+      dependency_file_path:
+        required: false
+        type: string
+        default: ''
+        description: 'Ruta exacta del archivo de dependencias relativa al repositorio. Si se omite, se detecta automáticamente para ecosistemas conocidos'
+      schedule_interval:
+        required: false
+        type: string
+        default: ''
+        description: 'Frecuencia de verificación (daily, weekly, monthly). Si está vacío, se ejecuta bajo demanda'
+      open_pull_requests_limit:
+        required: false
+        type: number
+        default: 10
+        description: 'Límite de PRs abiertos simultáneamente'
+      
+      # Parámetros para auto-aprobación y auto-fusión
+      auto_approve:
+        required: false
+        type: boolean
+        default: false
+        description: 'Aprobar automáticamente PRs de Dependabot'
+      auto_merge:
+        required: false
+        type: boolean
+        default: false
+        description: 'Fusionar automáticamente PRs de Dependabot'
+      auto_merge_label:
+        required: false
+        type: string
+        default: 'dependencies'
+        description: 'Etiqueta que deben tener los PRs de Dependabot para ser auto-fusionados. Dejar vacío para no filtrar por etiqueta'
+      
+      # Parámetros para configuración de versiones
+      allow_major_versions:
+        required: false
+        type: boolean
+        default: false
+        description: 'Permitir actualizaciones de versiones mayores'
+
+jobs:
+  check-dependencies:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Dependabot configuration
+        id: setup_dependabot_config
+        run: |
+          mkdir -p .github
+          
+          if [ -n "${{ inputs.schedule_interval }}" ]; then
+            cat > .github/dependabot.yml << EOF
+          version: 2
+          updates:
+            - package-ecosystem: "${{ inputs.package_ecosystem }}"
+              directory: "${{ inputs.directory }}"
+              schedule:
+                interval: "${{ inputs.schedule_interval }}"
+              open-pull-requests-limit: ${{ inputs.open_pull_requests_limit }}
+          EOF
+
+            if [ "${{ inputs.allow_major_versions }}" != 'true' ]; then
+              cat >> .github/dependabot.yml << 'EOF'
+              ignore:
+                - dependency-name: "*"
+                  update-types:
+                    - "version-update:semver-major"
+          EOF
+            fi
+
+            echo "config_written=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Se omitió la configuración de dependabot.yml para ejecuciones bajo demanda" >> "$GITHUB_STEP_SUMMARY"
+            echo "config_written=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolver archivo de dependencias
+        if: ${{ inputs.schedule_interval == '' }}
+        id: manifest
+        env:
+          INPUT_MANIFEST: ${{ inputs.dependency_file_path }}
+          PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
+          DEP_DIRECTORY: ${{ inputs.directory }}
+        run: |
+          set -euo pipefail
+
+          manifest="$INPUT_MANIFEST"
+
+          if [ -z "$manifest" ]; then
+            case "$PACKAGE_ECOSYSTEM" in
+              npm|yarn|pnpm)
+                manifest="package.json"
+                ;;
+              pip)
+                manifest="requirements.txt"
+                ;;
+              poetry)
+                manifest="pyproject.toml"
+                ;;
+              maven)
+                manifest="pom.xml"
+                ;;
+              gradle)
+                manifest="build.gradle"
+                ;;
+              gradle-kotlin)
+                manifest="build.gradle.kts"
+                ;;
+              cargo)
+                manifest="Cargo.toml"
+                ;;
+              composer)
+                manifest="composer.json"
+                ;;
+              gomod)
+                manifest="go.mod"
+                ;;
+              bundler)
+                manifest="Gemfile"
+                ;;
+              docker)
+                manifest="Dockerfile"
+                ;;
+              github-actions)
+                manifest=".github/workflows"
+                ;;
+              *)
+                echo "No se pudo determinar el archivo de dependencias para el ecosistema '$PACKAGE_ECOSYSTEM'." >&2
+                echo "Proporciona 'dependency_file_path' al invocar el workflow." >&2
+                exit 1
+                ;;
+            esac
+          fi
+
+          dir="$DEP_DIRECTORY"
+          if [ "$dir" = "/" ]; then
+            dir=""
+          else
+            dir="${dir#/}"
+            dir="${dir%/}"
+          fi
+
+          if [ -n "$dir" ]; then
+            dependency_path="$dir/$manifest"
+          else
+            dependency_path="$manifest"
+          fi
+
+          echo "Archivo de dependencias resuelto: $dependency_path" >> "$GITHUB_STEP_SUMMARY"
+          echo "dependency_file=$dependency_path" >> "$GITHUB_OUTPUT"
+      
+      # Si no hay schedule_interval, ejecutar verificación inmediata
+      - name: Run immediate dependency check
+        if: ${{ inputs.schedule_interval == '' }}
+        run: |
+          echo "Ejecutando verificación inmediata de dependencias"
+          # Usar GitHub CLI para verificar dependencias
+          gh api -X POST /repos/${{ github.repository }}/dependabot/scans \
+            -f dependency-file-path="${{ steps.manifest.outputs.dependency_file }}" \
+            -f package-ecosystem="${{ inputs.package_ecosystem }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Commit Dependabot configuration
+        if: ${{ steps.setup_dependabot_config.outputs.config_written == 'true' }}
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "chore: Configure Dependabot"
+          file_pattern: .github/dependabot.yml
+
+  # Este job se ejecuta cuando hay PRs de Dependabot y auto_approve está habilitado
+  auto-approve-dependabot:
+    needs: check-dependencies
+    if: ${{ inputs.auto_approve == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Auto-approve Dependabot PRs
+        uses: hmarr/auto-approve-action@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          review-message: "Auto-aprobado por el workflow de Dependabot"
+
+  # Este job se ejecuta cuando hay PRs de Dependabot y auto_merge está habilitado
+  auto-merge-dependabot:
+    needs: [check-dependencies]
+    if: ${{ inputs.auto_merge == true }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+    steps:
+      - name: Auto-merge Dependabot PRs
+        run: |
+          set -euo pipefail
+
+          label='${{ inputs.auto_merge_label }}'
+          search_query="author:app/dependabot"
+          if [ -n "$label" ]; then
+            search_query="$search_query label:$label"
+          fi
+
+          prs=$(gh pr list --repo "${{ github.repository }}" --state open --search "$search_query" --json number --jq '.[].number')
+
+          if [ -z "$prs" ]; then
+            echo "No se encontraron PRs de Dependabot para fusionar"
+            exit 0
+          fi
+
+          while IFS= read -r pr_number; do
+            echo "Auto-merge del PR #$pr_number"
+            gh pr merge "$pr_number" --auto --merge --repo "${{ github.repository }}"
+          done <<< "$prs"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
