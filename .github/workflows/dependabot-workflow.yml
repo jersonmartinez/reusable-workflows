@@ -73,6 +73,18 @@ on:
         type: string
         default: 'auto'
         description: 'Versioning strategy (auto, increase, increase-if-necessary, widen, lockfile-only)'
+      
+      rebase_strategy:
+        required: false
+        type: string
+        default: 'auto'
+        description: 'Rebase strategy (auto, disabled)'
+      
+      insecure_external_code_execution:
+        required: false
+        type: string
+        default: 'deny'
+        description: 'Allow/deny external code execution (allow, deny)'
 
 jobs:
   setup-dependabot:
@@ -81,445 +93,329 @@ jobs:
       contents: write
       pull-requests: read
     
+    outputs:
+      config_updated: ${{ steps.update_config.outputs.updated }}
+      manifest_found: ${{ steps.validate.outputs.manifest_exists }}
+      dependabot_file: ${{ steps.update_config.outputs.file_path }}
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch || github.event.repository.default_branch }}
-          fetch-depth: 1
-        continue-on-error: false
+          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Validate inputs
         id: validate
         run: |
           set -euo pipefail
           
-          echo "🔍 Validating workflow inputs..."
-          
-          # Validar ecosistema
-          valid_ecosystems=(
-            "bundler" "cargo" "composer" "docker" "elm" "gitsubmodule"
-            "github-actions" "gomod" "gradle" "maven" "mix" "npm"
-            "nuget" "pip" "pub" "terraform" "devcontainers"
-          )
-          
-          ecosystem="${{ inputs.package_ecosystem }}"
-          if [[ ! " ${valid_ecosystems[*]} " =~ " ${ecosystem} " ]]; then
-            echo "❌ Invalid package ecosystem: $ecosystem"
-            echo "Valid options: ${valid_ecosystems[*]}"
+          # Validar package_ecosystem
+          VALID_ECOSYSTEMS="npm yarn pnpm pip pipenv poetry pub cargo bundler composer mix hex nuget gradle maven docker terraform github-actions gomod"
+          if ! echo "$VALID_ECOSYSTEMS" | grep -qw "${{ inputs.package_ecosystem }}"; then
+            echo "::error::Invalid package_ecosystem: ${{ inputs.package_ecosystem }}"
+            echo "Valid options: $VALID_ECOSYSTEMS"
             exit 1
           fi
-          echo "✅ Ecosystem validated: $ecosystem"
           
-          # Validar intervalo
-          valid_intervals=("daily" "weekly" "monthly")
-          interval="${{ inputs.schedule_interval }}"
-          if [[ ! " ${valid_intervals[*]} " =~ " ${interval} " ]]; then
-            echo "❌ Invalid schedule interval: $interval"
-            echo "Valid options: ${valid_intervals[*]}"
+          # Validar schedule_interval
+          VALID_INTERVALS="daily weekly monthly"
+          if ! echo "$VALID_INTERVALS" | grep -qw "${{ inputs.schedule_interval }}"; then
+            echo "::error::Invalid schedule_interval: ${{ inputs.schedule_interval }}"
+            echo "Valid options: $VALID_INTERVALS"
             exit 1
           fi
-          echo "✅ Interval validated: $interval"
           
-          # Validar límite de PRs
-          pr_limit=${{ inputs.open_pull_requests_limit }}
-          if [[ $pr_limit -lt 1 || $pr_limit -gt 10 ]]; then
-            echo "❌ Invalid PR limit: $pr_limit (must be between 1-10)"
+          # Validar open_pull_requests_limit
+          if [ "${{ inputs.open_pull_requests_limit }}" -lt 1 ] || [ "${{ inputs.open_pull_requests_limit }}" -gt 10 ]; then
+            echo "::error::open_pull_requests_limit must be between 1 and 10"
             exit 1
           fi
-          echo "✅ PR limit validated: $pr_limit"
           
-          # Validar versioning strategy
-          valid_strategies=("auto" "increase" "increase-if-necessary" "widen" "lockfile-only")
-          strategy="${{ inputs.versioning_strategy }}"
-          if [[ ! " ${valid_strategies[*]} " =~ " ${strategy} " ]]; then
-            echo "❌ Invalid versioning strategy: $strategy"
-            echo "Valid options: ${valid_strategies[*]}"
+          # Validar versioning_strategy
+          VALID_STRATEGIES="auto increase increase-if-necessary widen lockfile-only"
+          if ! echo "$VALID_STRATEGIES" | grep -qw "${{ inputs.versioning_strategy }}"; then
+            echo "::error::Invalid versioning_strategy: ${{ inputs.versioning_strategy }}"
+            echo "Valid options: $VALID_STRATEGIES"
             exit 1
           fi
-          echo "✅ Versioning strategy validated: $strategy"
+          
+          # Detectar manifest file automáticamente
+          ECOSYSTEM="${{ inputs.package_ecosystem }}"
+          DIRECTORY="${{ inputs.directory }}"
           
           # Normalizar directorio
-          directory="${{ inputs.directory }}"
-          directory="${directory#./}"  # Remover ./ al inicio
-          directory="${directory%/}"   # Remover / al final
-          
-          if [[ -z "$directory" || "$directory" == "." ]]; then
-            directory="/"
-          elif [[ ! "$directory" =~ ^/ ]]; then
-            directory="/$directory"
-          fi
-          
-          echo "normalized_directory=$directory" >> $GITHUB_OUTPUT
-          echo "✅ Directory normalized: $directory"
-          
-          # Determinar branch objetivo
-          target_branch="${{ inputs.target_branch }}"
-          if [[ -z "$target_branch" ]]; then
-            target_branch="${{ github.event.repository.default_branch }}"
-          fi
-          echo "target_branch=$target_branch" >> $GITHUB_OUTPUT
-          echo "✅ Target branch: $target_branch"
-          
-          # Validar commit message prefix
-          valid_prefixes=("chore" "ci" "build" "docs" "feat" "fix" "refactor" "style" "test")
-          prefix="${{ inputs.commit_message_prefix }}"
-          if [[ ! " ${valid_prefixes[*]} " =~ " ${prefix} " ]]; then
-            echo "⚠️ Non-conventional commit prefix: $prefix (continuing anyway)"
-          fi
-          
-          echo "🎉 All validations passed!"
-      
-      - name: Check if manifest file exists
-        id: check_manifest
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          
-          ecosystem="${{ inputs.package_ecosystem }}"
-          directory="${{ steps.validate.outputs.normalized_directory }}"
-          
-          # Mapear ecosistema a archivos manifesto
-          declare -A manifest_files=(
-            ["npm"]="package.json"
-            ["yarn"]="package.json"
-            ["pnpm"]="package.json"
-            ["pip"]="requirements.txt|setup.py|Pipfile|pyproject.toml"
-            ["pipenv"]="Pipfile"
-            ["poetry"]="pyproject.toml"
-            ["maven"]="pom.xml"
-            ["gradle"]="build.gradle|build.gradle.kts"
-            ["cargo"]="Cargo.toml"
-            ["composer"]="composer.json"
-            ["gomod"]="go.mod"
-            ["bundler"]="Gemfile"
-            ["docker"]="Dockerfile"
-            ["github-actions"]=".github/workflows"
-            ["terraform"]="*.tf"
-            ["nuget"]="*.csproj|*.fsproj|*.vbproj|packages.config"
-          )
-          
-          manifest="${manifest_files[$ecosystem]:-}"
-          
-          if [[ -z "$manifest" ]]; then
-            echo "⚠️ No default manifest defined for $ecosystem"
-            echo "manifest_found=unknown" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          # Construir ruta completa
-          if [[ "$directory" == "/" ]]; then
-            search_path="."
+          if [ "$DIRECTORY" = "/" ]; then
+            SEARCH_DIR="."
           else
-            search_path=".${directory}"
+            SEARCH_DIR="${DIRECTORY#/}"
           fi
           
-          # Buscar archivos (soporta múltiples opciones con |)
-          IFS='|' read -ra PATTERNS <<< "$manifest"
-          found=false
+          MANIFEST_FILE=""
+          case "$ECOSYSTEM" in
+            npm|yarn|pnpm)
+              MANIFEST_FILE="package.json"
+              ;;
+            pip)
+              if [ -f "$SEARCH_DIR/requirements.txt" ]; then
+                MANIFEST_FILE="requirements.txt"
+              elif [ -f "$SEARCH_DIR/setup.py" ]; then
+                MANIFEST_FILE="setup.py"
+              elif [ -f "$SEARCH_DIR/pyproject.toml" ]; then
+                MANIFEST_FILE="pyproject.toml"
+              elif [ -f "$SEARCH_DIR/Pipfile" ]; then
+                MANIFEST_FILE="Pipfile"
+              fi
+              ;;
+            pipenv)
+              MANIFEST_FILE="Pipfile"
+              ;;
+            poetry)
+              MANIFEST_FILE="pyproject.toml"
+              ;;
+            cargo)
+              MANIFEST_FILE="Cargo.toml"
+              ;;
+            bundler)
+              MANIFEST_FILE="Gemfile"
+              ;;
+            composer)
+              MANIFEST_FILE="composer.json"
+              ;;
+            maven)
+              MANIFEST_FILE="pom.xml"
+              ;;
+            gradle)
+              if [ -f "$SEARCH_DIR/build.gradle.kts" ]; then
+                MANIFEST_FILE="build.gradle.kts"
+              else
+                MANIFEST_FILE="build.gradle"
+              fi
+              ;;
+            gomod)
+              MANIFEST_FILE="go.mod"
+              ;;
+            docker)
+              MANIFEST_FILE="Dockerfile"
+              ;;
+            github-actions)
+              MANIFEST_FILE=".github/workflows"
+              ;;
+            terraform)
+              MANIFEST_FILE="*.tf"
+              ;;
+            *)
+              echo "::warning::Cannot auto-detect manifest for ecosystem: $ECOSYSTEM"
+              ;;
+          esac
           
-          for pattern in "${PATTERNS[@]}"; do
-            if [[ "$pattern" == *"*"* ]]; then
-              # Patrón con wildcard
-              if compgen -G "${search_path}/${pattern}" > /dev/null; then
-                found=true
-                echo "✅ Found manifest matching: $pattern in $search_path"
-                break
+          # Verificar existencia del manifest
+          MANIFEST_EXISTS="false"
+          if [ -n "$MANIFEST_FILE" ]; then
+            if [ "$MANIFEST_FILE" = ".github/workflows" ]; then
+              if [ -d ".github/workflows" ]; then
+                MANIFEST_EXISTS="true"
+              fi
+            elif [ "$MANIFEST_FILE" = "*.tf" ]; then
+              if ls $SEARCH_DIR/*.tf 1> /dev/null 2>&1; then
+                MANIFEST_EXISTS="true"
               fi
             else
-              # Archivo específico
-              if [[ -f "${search_path}/${pattern}" ]]; then
-                found=true
-                echo "✅ Found manifest: ${search_path}/${pattern}"
-                break
+              FULL_PATH="$SEARCH_DIR/$MANIFEST_FILE"
+              if [ -f "$FULL_PATH" ]; then
+                MANIFEST_EXISTS="true"
               fi
             fi
-          done
+          fi
           
-          if [[ "$found" == true ]]; then
-            echo "manifest_found=true" >> $GITHUB_OUTPUT
+          echo "manifest_file=$MANIFEST_FILE" >> $GITHUB_OUTPUT
+          echo "manifest_exists=$MANIFEST_EXISTS" >> $GITHUB_OUTPUT
+          
+          if [ "$MANIFEST_EXISTS" = "false" ]; then
+            echo "::warning::Manifest file not found: $MANIFEST_FILE in $SEARCH_DIR"
+            echo "::warning::Dependabot may not work correctly without a manifest file"
           else
-            echo "⚠️ No manifest file found in $search_path"
-            echo "Expected one of: $manifest"
-            echo "manifest_found=false" >> $GITHUB_OUTPUT
+            echo "::notice::✅ Manifest file found: $MANIFEST_FILE"
           fi
       
-      - name: Create .github directory
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
         run: |
-          mkdir -p .github
-          echo "✅ .github directory ready"
+          pip install --quiet pyyaml
       
-      - name: Generate Dependabot configuration
-        id: generate_config
-        run: |
-          set -euo pipefail
-          
-          config_file=".github/dependabot.yml"
-          
-          echo "📝 Generating Dependabot configuration..."
-          
-          # Verificar si ya existe configuración
-          merge_mode="create"
-          if [[ -f "$config_file" ]]; then
-            merge_mode="merge"
-            echo "ℹ️ Existing configuration found, will merge"
-            cp "$config_file" "${config_file}.backup"
-          fi
-          
-          # Generar nueva entrada
-          cat > "${config_file}.new" << 'EOF'
-          version: 2
-          updates:
-            - package-ecosystem: "${{ inputs.package_ecosystem }}"
-              directory: "${{ steps.validate.outputs.normalized_directory }}"
-              schedule:
-                interval: "${{ inputs.schedule_interval }}"
-          EOF
-          
-          # Añadir configuraciones opcionales
-          cat >> "${config_file}.new" << EOF
-              open-pull-requests-limit: ${{ inputs.open_pull_requests_limit }}
-              target-branch: "${{ steps.validate.outputs.target_branch }}"
-          EOF
-          
-          # Añadir labels si están especificadas
-          if [[ -n "${{ inputs.labels }}" ]]; then
-            echo "              labels:" >> "${config_file}.new"
-            IFS=',' read -ra LABELS <<< "${{ inputs.labels }}"
-            for label in "${LABELS[@]}"; do
-              label=$(echo "$label" | xargs)  # Trim whitespace
-              echo "                - \"$label\"" >> "${config_file}.new"
-            done
-          fi
-          
-          # Añadir reviewers
-          if [[ -n "${{ inputs.reviewers }}" ]]; then
-            echo "              reviewers:" >> "${config_file}.new"
-            IFS=',' read -ra REVIEWERS <<< "${{ inputs.reviewers }}"
-            for reviewer in "${REVIEWERS[@]}"; do
-              reviewer=$(echo "$reviewer" | xargs)
-              echo "                - \"$reviewer\"" >> "${config_file}.new"
-            done
-          fi
-          
-          # Añadir assignees
-          if [[ -n "${{ inputs.assignees }}" ]]; then
-            echo "              assignees:" >> "${config_file}.new"
-            IFS=',' read -ra ASSIGNEES <<< "${{ inputs.assignees }}"
-            for assignee in "${ASSIGNEES[@]}"; do
-              assignee=$(echo "$assignee" | xargs)
-              echo "                - \"$assignee\"" >> "${config_file}.new"
-            done
-          fi
-          
-          # Añadir milestone
-          if [[ ${{ inputs.milestone }} -gt 0 ]]; then
-            echo "              milestone: ${{ inputs.milestone }}" >> "${config_file}.new"
-          fi
-          
-          # Añadir versioning strategy si no es auto
-          if [[ "${{ inputs.versioning_strategy }}" != "auto" ]]; then
-            echo "              versioning-strategy: ${{ inputs.versioning_strategy }}" >> "${config_file}.new"
-          fi
-          
-          # Ignorar versiones mayores si está configurado
-          if [[ "${{ inputs.allow_major_versions }}" == "false" ]]; then
-            cat >> "${config_file}.new" << 'EOF'
-              ignore:
-                - dependency-name: "*"
-                  update-types: ["version-update:semver-major"]
-          EOF
-          fi
-          
-          # Si es modo merge, necesitamos combinar configs
-          if [[ "$merge_mode" == "merge" ]]; then
-            echo "🔄 Merging with existing configuration..."
-            # TODO: Implementar merge inteligente si es necesario
-            # Por ahora, sobrescribimos
-            mv "${config_file}.new" "$config_file"
-          else
-            mv "${config_file}.new" "$config_file"
-          fi
-          
-          echo "✅ Configuration generated successfully"
-          echo ""
-          echo "📄 Configuration content:"
-          cat "$config_file"
-          
-          echo "config_path=$config_file" >> $GITHUB_OUTPUT
-      
-      - name: Validate configuration with GitHub API
-        id: validate_config
+      - name: Update Dependabot configuration
+        id: update_config
         uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const yaml = require('js-yaml');
+            
+            // Inputs
+            const ecosystem = '${{ inputs.package_ecosystem }}';
+            const directory = '${{ inputs.directory }}';
+            const scheduleInterval = '${{ inputs.schedule_interval }}';
+            const allowMajor = ${{ inputs.allow_major_versions }};
+            const prLimit = ${{ inputs.open_pull_requests_limit }};
+            const targetBranch = '${{ inputs.target_branch }}' || context.payload.repository.default_branch;
+            const labels = '${{ inputs.labels }}'.split(',').map(l => l.trim()).filter(Boolean);
+            const reviewers = '${{ inputs.reviewers }}'.split(',').map(r => r.trim()).filter(Boolean);
+            const assignees = '${{ inputs.assignees }}'.split(',').map(a => a.trim()).filter(Boolean);
+            const milestone = ${{ inputs.milestone }};
+            const versioningStrategy = '${{ inputs.versioning_strategy }}';
+            const rebaseStrategy = '${{ inputs.rebase_strategy }}';
+            const commitPrefix = '${{ inputs.commit_message_prefix }}';
+            
+            // Paths
+            const configPath = '.github/dependabot.yml';
+            const configDir = '.github';
+            
+            // Create .github directory if it doesn't exist
+            if (!fs.existsSync(configDir)) {
+              fs.mkdirSync(configDir, { recursive: true });
+            }
+            
+            // Load or create config
+            let config;
+            if (fs.existsSync(configPath)) {
+              const content = fs.readFileSync(configPath, 'utf8');
+              config = yaml.load(content);
+            } else {
+              config = {
+                version: 2,
+                updates: []
+              };
+            }
+            
+            // Find existing entry
+            const existingIndex = config.updates.findIndex(
+              u => u['package-ecosystem'] === ecosystem && u.directory === directory
+            );
+            
+            // Build new entry
+            const newEntry = {
+              'package-ecosystem': ecosystem,
+              directory: directory,
+              schedule: {
+                interval: scheduleInterval
+              },
+              'open-pull-requests-limit': prLimit
+            };
+            
+            // Add optional fields
+            if (targetBranch !== context.payload.repository.default_branch) {
+              newEntry['target-branch'] = targetBranch;
+            }
+            
+            if (labels.length > 0) {
+              newEntry.labels = labels;
+            }
+            
+            if (reviewers.length > 0) {
+              newEntry.reviewers = reviewers;
+            }
+            
+            if (assignees.length > 0) {
+              newEntry.assignees = assignees;
+            }
+            
+            if (milestone > 0) {
+              newEntry.milestone = milestone;
+            }
+            
+            if (versioningStrategy !== 'auto') {
+              newEntry['versioning-strategy'] = versioningStrategy;
+            }
+            
+            if (rebaseStrategy !== 'auto') {
+              newEntry['rebase-strategy'] = rebaseStrategy;
+            }
+            
+            // Add commit message configuration
+            newEntry['commit-message'] = {
+              prefix: commitPrefix
+            };
+            
+            // Add ignore rules for major versions
+            if (!allowMajor) {
+              newEntry.ignore = [
+                {
+                  'dependency-name': '*',
+                  'update-types': ['version-update:semver-major']
+                }
+              ];
+            }
+            
+            // Update or add entry
+            if (existingIndex >= 0) {
+              config.updates[existingIndex] = newEntry;
+              core.info(`Updated existing configuration for ${ecosystem} in ${directory}`);
+            } else {
+              config.updates.push(newEntry);
+              core.info(`Added new configuration for ${ecosystem} in ${directory}`);
+            }
+            
+            // Write config
+            const yamlContent = yaml.dump(config, {
+              indent: 2,
+              lineWidth: -1,
+              noRefs: true
+            });
+            
+            fs.writeFileSync(configPath, yamlContent);
+            
+            core.setOutput('updated', 'true');
+            core.setOutput('file_path', configPath);
+            
+            return { success: true, path: configPath };
+      
+      - name: Commit and push changes
+        id: commit
         continue-on-error: true
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: |
+            ${{ inputs.commit_message_prefix }}: configure Dependabot for ${{ inputs.package_ecosystem }} in ${{ inputs.directory }}
+            
+            - Package ecosystem: ${{ inputs.package_ecosystem }}
+            - Directory: ${{ inputs.directory }}
+            - Schedule: ${{ inputs.schedule_interval }}
+            - Allow major versions: ${{ inputs.allow_major_versions }}
+            
+            [skip ci]
+          file_pattern: '.github/dependabot.yml'
+          commit_user_name: 'github-actions[bot]'
+          commit_user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
+          branch: ${{ inputs.target_branch || github.event.repository.default_branch }}
+          push_options: '--force-with-lease'
+      
+      - name: Retry commit on conflict
+        if: steps.commit.outcome == 'failure'
+        uses: actions/github-script@v7
         with:
           retries: 3
           retry-exempt-status-codes: 400,401,403,404,422
           script: |
-            const fs = require('fs');
-            const yaml = require('js-yaml');
-            
-            const configPath = '${{ steps.generate_config.outputs.config_path }}';
-            
-            try {
-              // Leer y parsear YAML
-              const configContent = fs.readFileSync(configPath, 'utf8');
-              const config = yaml.load(configContent);
-              
-              // Validaciones básicas
-              if (config.version !== 2) {
-                throw new Error('Invalid version. Must be 2');
-              }
-              
-              if (!config.updates || !Array.isArray(config.updates)) {
-                throw new Error('Missing or invalid updates array');
-              }
-              
-              if (config.updates.length === 0) {
-                throw new Error('At least one update configuration required');
-              }
-              
-              // Validar cada entrada
-              for (const [index, update] of config.updates.entries()) {
-                if (!update['package-ecosystem']) {
-                  throw new Error(`Update ${index}: missing package-ecosystem`);
-                }
-                
-                if (!update.directory) {
-                  throw new Error(`Update ${index}: missing directory`);
-                }
-                
-                if (!update.schedule || !update.schedule.interval) {
-                  throw new Error(`Update ${index}: missing schedule.interval`);
-                }
-              }
-              
-              console.log('✅ Configuration validation passed');
-              core.setOutput('valid', 'true');
-              
-              // Generar summary
-              core.summary
-                .addHeading('✅ Configuration Valid', 3)
-                .addCodeBlock(configContent, 'yaml')
-                .write();
-              
-              return true;
-              
-            } catch (error) {
-              console.error('❌ Configuration validation failed:', error.message);
-              core.setOutput('valid', 'false');
-              core.setOutput('error', error.message);
-              
-              core.summary
-                .addHeading('❌ Configuration Invalid', 3)
-                .addRaw(`Error: ${error.message}`)
-                .write();
-              
-              throw error;
-            }
-      
-      - name: Commit configuration
-        id: commit
-        uses: actions/github-script@v7
-        with:
-          retries: 3
-          retry-exempt-status-codes: 409,422
-          script: |
-            const fs = require('fs');
             const { execSync } = require('child_process');
             
-            const configPath = '${{ steps.generate_config.outputs.config_path }}';
-            const ecosystem = '${{ inputs.package_ecosystem }}';
-            const directory = '${{ steps.validate.outputs.normalized_directory }}';
-            const commitPrefix = '${{ inputs.commit_message_prefix }}';
+            // Pull latest changes
+            execSync('git pull --rebase origin ${{ inputs.target_branch || github.event.repository.default_branch }}');
             
-            // Configurar git
-            execSync('git config user.name "github-actions[bot]"');
-            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
-            
-            // Verificar cambios
-            try {
-              execSync(`git diff --quiet ${configPath}`);
-              console.log('ℹ️ No changes detected in configuration');
-              core.setOutput('committed', 'false');
-              core.setOutput('no_changes', 'true');
-              return;
-            } catch (error) {
-              // Hay cambios, continuar
-            }
-            
-            // Preparar commit
-            const commitMessage = `${commitPrefix}: configure Dependabot for ${ecosystem} in ${directory}
-            
-            - Package ecosystem: ${ecosystem}
-            - Directory: ${directory}
-            - Schedule: ${{ inputs.schedule_interval }}
-            - Allow major versions: ${{ inputs.allow_major_versions }}
-            
-            [skip ci]`;
+            // Re-apply our changes
+            execSync('git add .github/dependabot.yml');
             
             try {
-              execSync(`git add ${configPath}`);
-              execSync(`git commit -m "${commitMessage}"`);
-              
-              // Retry logic para push
-              let pushed = false;
-              let attempts = 0;
-              const maxAttempts = 3;
-              
-              while (!pushed && attempts < maxAttempts) {
-                try {
-                  attempts++;
-                  console.log(`📤 Push attempt ${attempts}/${maxAttempts}...`);
-                  
-                  // Pull con rebase antes de push
-                  if (attempts > 1) {
-                    execSync('git pull --rebase origin ${{ steps.validate.outputs.target_branch }}');
-                  }
-                  
-                  execSync('git push origin HEAD:${{ steps.validate.outputs.target_branch }}');
-                  pushed = true;
-                  console.log('✅ Configuration committed and pushed successfully');
-                  
-                } catch (pushError) {
-                  if (attempts >= maxAttempts) {
-                    throw pushError;
-                  }
-                  console.log(`⚠️ Push failed, retrying... (${attempts}/${maxAttempts})`);
-                  await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
-                }
-              }
-              
-              core.setOutput('committed', 'true');
-              core.setOutput('no_changes', 'false');
-              
+              execSync(`git commit -m "${{ inputs.commit_message_prefix }}: configure Dependabot for ${{ inputs.package_ecosystem }} in ${{ inputs.directory }}\n\n[skip ci]"`);
+              execSync('git push');
+              core.info('✅ Successfully committed after retry');
             } catch (error) {
-              console.error('❌ Failed to commit configuration:', error.message);
-              throw error;
-            }
-      
-      - name: Trigger Dependabot scan (optional)
-        if: steps.commit.outputs.committed == 'true'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          retries: 3
-          script: |
-            const ecosystem = '${{ inputs.package_ecosystem }}';
-            const directory = '${{ steps.validate.outputs.normalized_directory }}';
-            const targetBranch = '${{ steps.validate.outputs.target_branch }}';
-            
-            console.log('🔄 Requesting immediate Dependabot scan...');
-            
-            try {
-              await github.rest.dependabot.createAlert({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-              });
-              console.log('✅ Dependabot scan triggered');
-            } catch (error) {
-              console.log('ℹ️ Could not trigger immediate scan (this is optional)');
-              console.log('Dependabot will run on the next scheduled interval');
+              core.setFailed(`Failed to commit after retry: ${error.message}`);
             }
       
       - name: Generate summary
@@ -534,85 +430,32 @@ jobs:
           |---------|-------|
           | **Repository** | `${{ github.repository }}` |
           | **Ecosystem** | `${{ inputs.package_ecosystem }}` |
-          | **Directory** | `${{ steps.validate.outputs.normalized_directory }}` |
+          | **Directory** | `${{ inputs.directory }}` |
           | **Schedule** | `${{ inputs.schedule_interval }}` |
-          | **Target Branch** | `${{ steps.validate.outputs.target_branch }}` |
+          | **Target Branch** | `${{ inputs.target_branch || github.event.repository.default_branch }}` |
           | **PR Limit** | `${{ inputs.open_pull_requests_limit }}` |
           | **Allow Major Versions** | `${{ inputs.allow_major_versions }}` |
           | **Versioning Strategy** | `${{ inputs.versioning_strategy }}` |
-          EOF
-          
-          # Añadir información de manifest
-          if [[ "${{ steps.check_manifest.outputs.manifest_found }}" == "true" ]]; then
-            echo "| **Manifest File** | ✅ Found |" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ steps.check_manifest.outputs.manifest_found }}" == "false" ]]; then
-            echo "| **Manifest File** | ⚠️ Not found (verify path) |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| **Manifest File** | ℹ️ Not checked |" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Añadir labels si existen
-          if [[ -n "${{ inputs.labels }}" ]]; then
-            echo "| **Labels** | \`${{ inputs.labels }}\` |" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Añadir reviewers si existen
-          if [[ -n "${{ inputs.reviewers }}" ]]; then
-            echo "| **Reviewers** | \`${{ inputs.reviewers }}\` |" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          | **Commit Prefix** | `${{ inputs.commit_message_prefix }}` |
+          | **Manifest File** | `${{ steps.validate.outputs.manifest_file }}` |
+          | **Manifest Found** | `${{ steps.validate.outputs.manifest_exists == 'true' && '✅' || '⚠️ Not found' }}` |
+          | **Labels** | `${{ inputs.labels }}` |
+          | **Reviewers** | `${{ inputs.reviewers || 'None' }}` |
+          | **Assignees** | `${{ inputs.assignees || 'None' }}` |
+          | **Milestone** | `${{ inputs.milestone > 0 && inputs.milestone || 'None' }}` |
           
           ### Status
           
-          EOF
-          
-          if [[ "${{ steps.commit.outputs.committed }}" == "true" ]]; then
-            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          ✅ **Configuration successfully committed**
-          
-          Dependabot will start scanning on the next scheduled run.
-          EOF
-          elif [[ "${{ steps.commit.outputs.no_changes }}" == "true" ]]; then
-            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          ℹ️ **No changes detected**
-          
-          Configuration is already up to date.
-          EOF
-          else
-            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          ❌ **Configuration failed**
-          
-          Check the workflow logs for details.
-          EOF
-          fi
-          
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ${{ steps.update_config.outputs.updated == 'true' && '✅' || '❌' }} Configuration ${{ steps.commit.outcome == 'success' && 'successfully committed' || 'update attempted' }}
           
           ### Next Steps
           
-          1. 🔍 Monitor Dependabot activity in [Insights → Dependency graph → Dependabot](https://github.com/${{ github.repository }}/network/updates)
-          2. 📬 Review and merge PRs as they are created
-          3. 🔐 Check [Security Advisories](https://github.com/${{ github.repository }}/security/dependabot) for vulnerabilities
+          1. 🔍 **Monitor**: [Dependabot Insights](https://github.com/${{ github.repository }}/network/updates)
+          2. 📬 **Review PRs**: [Dependabot Pull Requests](https://github.com/${{ github.repository }}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot)
+          3. 🔐 **Security**: [Security Advisories](https://github.com/${{ github.repository }}/security/dependabot)
+          4. ⚙️ **Config File**: [dependabot.yml](https://github.com/${{ github.repository }}/blob/${{ inputs.target_branch || github.event.repository.default_branch }}/.github/dependabot.yml)
           
-          ### Useful Links
+          ---
           
-          - [Dependabot Documentation](https://docs.github.com/en/code-security/dependabot)
-          - [Configuration Options](https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file)
-          - [Repository Settings](https://github.com/${{ github.repository }}/settings/security_analysis)
+          💡 **Tip**: Dependabot will automatically create PRs based on the schedule. You can also trigger manual scans from the Dependency graph page.
           EOF
-      
-      - name: Comment on failure
-        if: failure() && github.event_name == 'workflow_dispatch'
-        uses: actions/github-script@v7
-        continue-on-error: true
-        with:
-          script: |
-            const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
-            github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: `❌ Dependabot configuration failed\n\nCheck the [workflow run](${runUrl}) for details.`
-            });
