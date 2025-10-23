@@ -1,0 +1,85 @@
+name: Setup Dependabot
+
+on:
+  workflow_call:
+    inputs:
+      ecosystems:
+        required: true
+        type: string
+        description: 'JSON con configuraciones de ecosistemas'
+      
+      schedule:
+        required: false
+        type: string
+        default: 'weekly'
+        description: 'Frecuencia de actualizaciones (daily, weekly, monthly)'
+      
+      pr_limit:
+        required: false
+        type: number
+        default: 5
+        description: 'Máximo de PRs abiertos simultáneamente'
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Generate Dependabot Config
+        run: |
+          python3 << 'EOF'
+          import yaml, json, sys
+          from pathlib import Path
+          
+          # Parsear configuración
+          try:
+              ecosystems = json.loads('''${{ inputs.ecosystems }}''')
+          except json.JSONDecodeError as e:
+              print(f"::error::JSON inválido: {e}")
+              sys.exit(1)
+          
+          # Generar configuración
+          config = {
+              'version': 2,
+              'updates': []
+          }
+          
+          for eco in ecosystems:
+              entry = {
+                  'package-ecosystem': eco['ecosystem'],
+                  'directory': eco.get('directory', '/'),
+                  'schedule': {'interval': '${{ inputs.schedule }}'},
+                  'open-pull-requests-limit': eco.get('pr_limit', ${{ inputs.pr_limit }})
+              }
+              
+              # Labels opcionales
+              if 'labels' in eco:
+                  entry['labels'] = eco['labels'].split(',')
+              
+              # Commit prefix opcional
+              if 'prefix' in eco:
+                  entry['commit-message'] = {'prefix': eco['prefix']}
+              
+              config['updates'].append(entry)
+          
+          # Guardar archivo
+          Path('.github').mkdir(exist_ok=True)
+          with open('.github/dependabot.yml', 'w') as f:
+              yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+          
+          print(f"::notice::✅ Configurados {len(ecosystems)} ecosistemas")
+          print(yaml.dump(config, default_flow_style=False))
+          EOF
+      
+      - name: Commit Changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore: update Dependabot configuration [skip ci]'
+          file_pattern: '.github/dependabot.yml'
+          commit_user_name: 'github-actions[bot]'
+          commit_user_email: '41898282+github-actions[bot]@users.noreply.github.com'
