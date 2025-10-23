@@ -1,3 +1,4 @@
+---
 name: Setup Dependabot
 
 on:
@@ -52,7 +53,7 @@ jobs:
           }
 
           ecosystems_summary = []
-          
+
           for eco in ecosystems:
               entry = {
                   'package-ecosystem': eco['ecosystem'],
@@ -74,7 +75,7 @@ jobs:
                   entry['commit-message'] = {'prefix': prefix}
 
               config['updates'].append(entry)
-              
+
               # Guardar info para el summary
               ecosystems_summary.append({
                   'ecosystem': eco['ecosystem'],
@@ -90,14 +91,14 @@ jobs:
               yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
           print(f"::notice::✅ Configurados {len(ecosystems)} ecosistemas")
-          
+
           # Guardar outputs para el summary
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"ecosystems_count={len(ecosystems)}\n")
               f.write(f"ecosystems_json={json.dumps(ecosystems_summary)}\n")
               f.write(f"schedule=${{ inputs.schedule }}\n")
               f.write(f"timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
-          
+
           # Mostrar configuración generada
           print("\n📋 Configuración generada:")
           print(yaml.dump(config, default_flow_style=False))
@@ -126,7 +127,7 @@ jobs:
           timestamp = "${{ steps.generate.outputs.timestamp }}"
           commit_status = "${{ steps.commit.outputs.changes_detected }}"
           commit_sha = "${{ steps.commit.outputs.commit_hash }}"
-          
+
           # Iconos por ecosistema
           icons = {
               'npm': '📦',
