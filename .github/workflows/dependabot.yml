@@ -39,6 +39,7 @@ jobs:
         run: |
           cat > /tmp/validate_labels.py << 'SCRIPT_EOF'
           import json, os, subprocess, sys
+          from collections import defaultdict
 
           # Obtener labels existentes del repositorio
           repo = os.getenv('GITHUB_REPOSITORY')
@@ -51,21 +52,23 @@ jobs:
                   check=True
               )
               existing_labels = {label['name'].lower() for label in json.loads(result.stdout)}
-              print(f"::notice::📋 Encontrados {len(existing_labels)} labels en el repositorio")
+              # Solo un notice informativo
+              print(f"::notice title=Labels Disponibles::📋 {len(existing_labels)} labels encontrados en el repositorio")
           except Exception as e:
-              print(f"::warning::No se pudieron obtener los labels: {e}")
+              print(f"::error title=Error API::No se pudieron obtener los labels: {e}")
               existing_labels = set()
 
           # Parsear ecosistemas
           try:
               ecosystems = json.loads('''${{ inputs.ecosystems }}''')
           except json.JSONDecodeError as e:
-              print(f"::error::JSON inválido: {e}")
+              print(f"::error title=JSON Inválido::Error al parsear ecosistemas: {e}")
               sys.exit(1)
 
           # Validar labels por ecosistema
           validation_results = []
           all_missing_labels = set()
+          ecosystems_without_labels = []
           
           for eco in ecosystems:
               if 'labels' not in eco:
@@ -83,36 +86,73 @@ jobs:
                       invalid_labels.append(label)
                       all_missing_labels.add(label)
               
-              # Actualizar ecosistema solo con labels válidos
-              if valid_labels:
-                  eco['labels'] = ','.join(valid_labels)
-                  print(f"::notice::✅ {eco['ecosystem']}: {len(valid_labels)} labels válidos")
-              else:
-                  # Remover el campo labels si no hay ninguno válido
-                  eco.pop('labels', None)
-                  print(f"::warning::⚠️ {eco['ecosystem']}: Sin labels válidos")
-              
-              if invalid_labels:
-                  print(f"::warning::🏷️ {eco['ecosystem']}: Labels omitidos: {', '.join(invalid_labels)}")
-              
+              # Guardar resultado de validación
               validation_results.append({
                   'ecosystem': eco['ecosystem'],
                   'directory': eco.get('directory', '/'),
+                  'prefix': eco.get('prefix', 'chore'),
+                  'pr_limit': eco.get('open-pull-requests-limit', eco.get('pr_limit', ${{ inputs.pr_limit }})),
                   'valid_labels': valid_labels,
                   'invalid_labels': invalid_labels
               })
+              
+              # Actualizar ecosistema solo con labels válidos
+              if valid_labels:
+                  eco['labels'] = ','.join(valid_labels)
+              else:
+                  eco.pop('labels', None)
+                  ecosystems_without_labels.append(f"{eco['ecosystem']} ({eco.get('directory', '/')})")
 
-          # Guardar resultados
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"validated_ecosystems={json.dumps(ecosystems)}\n")
-              f.write(f"validation_results={json.dumps(validation_results)}\n")
-              f.write(f"missing_labels={json.dumps(sorted(list(all_missing_labels)))}\n")
-              f.write(f"has_missing_labels={'true' if all_missing_labels else 'false'}\n")
+          # ============================================
+          # GENERAR WARNINGS CONSOLIDADOS (Sin duplicados)
+          # ============================================
+          
+          # Warning consolidado de ecosistemas sin labels
+          if ecosystems_without_labels:
+              eco_list = ', '.join(ecosystems_without_labels[:3])  # Primeros 3
+              if len(ecosystems_without_labels) > 3:
+                  eco_list += f' (+{len(ecosystems_without_labels) - 3} más)'
+              print(f"::warning title=Ecosistemas Sin Labels::⚠️ {len(ecosystems_without_labels)} ecosistema(s) sin labels válidos: {eco_list}")
 
+          # Warning consolidado de labels faltantes
           if all_missing_labels:
-              print(f"::warning::⚠️ Total de labels faltantes: {len(all_missing_labels)}")
-          else:
-              print("::notice::✅ Todos los labels configurados existen")
+              missing_list = ', '.join(sorted(all_missing_labels)[:5])  # Primeros 5
+              if len(all_missing_labels) > 5:
+                  missing_list += f' (+{len(all_missing_labels) - 5} más)'
+              print(f"::warning title=Labels Faltantes::🏷️ {len(all_missing_labels)} label(s) no existen: {missing_list}")
+
+          # Notice consolidado de éxito
+          valid_ecosystems = len([r for r in validation_results if r['valid_labels']])
+          if valid_ecosystems > 0:
+              print(f"::notice title=Validación Exitosa::✅ {valid_ecosystems} de {len(ecosystems)} ecosistemas tienen labels válidos")
+
+          # ============================================
+          # OUTPUTS
+          # ============================================
+          
+          # Ecosistemas validados (limpios)
+          validated_json = json.dumps(ecosystems, ensure_ascii=False)
+          print(f"validated_ecosystems={validated_json}")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"validated_ecosystems<<EOF\n{validated_json}\nEOF\n")
+          
+          # Resultados de validación (para el summary)
+          results_json = json.dumps(validation_results, ensure_ascii=False)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"validation_results<<EOF\n{results_json}\nEOF\n")
+          
+          # Labels faltantes únicos
+          missing_json = json.dumps(sorted(all_missing_labels), ensure_ascii=False)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"missing_labels<<EOF\n{missing_json}\nEOF\n")
+          
+          # Flags booleanos
+          has_missing = 'true' if all_missing_labels else 'false'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"has_missing_labels={has_missing}\n")
+              f.write(f"valid_ecosystems_count={valid_ecosystems}\n")
+              f.write(f"total_ecosystems_count={len(ecosystems)}\n")
+
           SCRIPT_EOF
 
           python3 /tmp/validate_labels.py
