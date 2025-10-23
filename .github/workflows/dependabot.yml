@@ -1,4 +1,3 @@
----
 name: Setup Dependabot
 
 on:
@@ -53,7 +52,7 @@ jobs:
           }
 
           ecosystems_summary = []
-
+          
           for eco in ecosystems:
               entry = {
                   'package-ecosystem': eco['ecosystem'],
@@ -75,7 +74,7 @@ jobs:
                   entry['commit-message'] = {'prefix': prefix}
 
               config['updates'].append(entry)
-
+              
               # Guardar info para el summary
               ecosystems_summary.append({
                   'ecosystem': eco['ecosystem'],
@@ -91,14 +90,14 @@ jobs:
               yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
           print(f"::notice::✅ Configurados {len(ecosystems)} ecosistemas")
-
+          
           # Guardar outputs para el summary
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"ecosystems_count={len(ecosystems)}\n")
               f.write(f"ecosystems_json={json.dumps(ecosystems_summary)}\n")
               f.write(f"schedule=${{ inputs.schedule }}\n")
               f.write(f"timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
-
+          
           # Mostrar configuración generada
           print("\n📋 Configuración generada:")
           print(yaml.dump(config, default_flow_style=False))
@@ -116,17 +115,19 @@ jobs:
       - name: Generate Summary
         if: always()
         run: |
-          python3 << 'EOF'
+          cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
           import json, os
 
           # Leer outputs
-          ecosystems_json = '''${{ steps.generate.outputs.ecosystems_json }}'''
+          ecosystems_json = os.getenv('ECOSYSTEMS_JSON', '[]')
           ecosystems = json.loads(ecosystems_json) if ecosystems_json else []
-          count = "${{ steps.generate.outputs.ecosystems_count }}"
-          schedule = "${{ steps.generate.outputs.schedule }}"
-          timestamp = "${{ steps.generate.outputs.timestamp }}"
-          commit_status = "${{ steps.commit.outputs.changes_detected }}"
-          commit_sha = "${{ steps.commit.outputs.commit_hash }}"
+          count = os.getenv('ECOSYSTEMS_COUNT', '0')
+          schedule = os.getenv('SCHEDULE', 'weekly')
+          timestamp = os.getenv('TIMESTAMP', 'N/A')
+          commit_status = os.getenv('COMMIT_STATUS', 'false')
+          commit_sha = os.getenv('COMMIT_SHA', '')
+          repo = os.getenv('GITHUB_REPOSITORY', '')
+          ref_name = os.getenv('GITHUB_REF_NAME', 'main')
 
           # Iconos por ecosistema
           icons = {
@@ -149,8 +150,109 @@ jobs:
           if commit_status == "true":
               status_badge = "✅ **Configuración Actualizada**"
               status_color = "🟢"
+              status_text = "Actualizado"
           else:
               status_badge = "ℹ️ **Sin Cambios**"
               status_color = "🔵"
+              status_text = "Sin cambios"
 
-          summary = f"""
+          # Construir summary
+          summary_parts = []
+          
+          summary_parts.append("# 🤖 Dependabot Configuration Report\n")
+          summary_parts.append(f"{status_badge}\n")
+          summary_parts.append("\n---\n\n")
+          summary_parts.append("## 📊 Resumen de Configuración\n\n")
+          summary_parts.append("| Métrica | Valor |\n")
+          summary_parts.append("|---------|-------|\n")
+          summary_parts.append(f"| 🎯 **Ecosistemas Configurados** | `{count}` |\n")
+          summary_parts.append(f"| 📅 **Frecuencia de Actualización** | `{schedule}` |\n")
+          summary_parts.append(f"| ⏰ **Ejecutado el** | `{timestamp}` |\n")
+          summary_parts.append(f"| 🔄 **Estado del Commit** | {status_color} {status_text} |\n")
+
+          if commit_sha and commit_status == "true":
+              short_sha = commit_sha[:7]
+              summary_parts.append(f"| 🔗 **Commit SHA** | [`{short_sha}`](https://github.com/{repo}/commit/{commit_sha}) |\n")
+
+          summary_parts.append("\n---\n\n")
+          summary_parts.append("## 🎯 Ecosistemas Configurados\n\n")
+          summary_parts.append("| Ecosistema | Directorio | Límite PRs | Labels | Prefix |\n")
+          summary_parts.append("|------------|------------|------------|--------|--------|\n")
+
+          for eco in ecosystems:
+              icon = icons.get(eco['ecosystem'], '📦')
+              summary_parts.append(f"| {icon} **{eco['ecosystem']}** | `{eco['directory']}` | {eco['pr_limit']} | `{eco['labels']}` | `{eco['prefix']}` |\n")
+
+          summary_parts.append("\n---\n\n")
+          summary_parts.append("## 🔗 Enlaces Útiles\n\n")
+          summary_parts.append("| Recurso | Enlace |\n")
+          summary_parts.append("|---------|--------|\n")
+          summary_parts.append(f"| 📄 **Configuración Generada** | [`.github/dependabot.yml`](https://github.com/{repo}/blob/{ref_name}/.github/dependabot.yml) |\n")
+          summary_parts.append(f"| 🔄 **Monitorear Actualizaciones** | [Dependency Graph](https://github.com/{repo}/network/updates) |\n")
+          summary_parts.append(f"| 🔍 **Pull Requests de Dependabot** | [Ver PRs](https://github.com/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot) |\n")
+          summary_parts.append(f"| 🛡️ **Alertas de Seguridad** | [Security Advisories](https://github.com/{repo}/security/dependabot) |\n")
+          summary_parts.append("| 📚 **Documentación Oficial** | [Dependabot Docs](https://docs.github.com/en/code-security/dependabot) |\n")
+
+          summary_parts.append("\n---\n\n")
+          summary_parts.append("## 📋 Próximos Pasos\n\n")
+          summary_parts.append(f"1. ✅ **Revisar configuración**: Verifica que todos los ecosistemas estén correctamente configurados\n")
+          summary_parts.append(f"2. ⏳ **Esperar primera actualización**: Dependabot ejecutará su primer scan según el schedule configurado (`{schedule}`)\n")
+          summary_parts.append("3. 🔔 **Configurar notificaciones**: Ajusta tus preferencias en [Settings → Notifications](https://github.com/settings/notifications)\n")
+          summary_parts.append("4. 👀 **Monitorear PRs**: Revisa y aprueba los pull requests generados automáticamente\n")
+          summary_parts.append("5. 🔒 **Habilitar auto-merge** (opcional): Para dependencias de parches/menores\n")
+
+          summary_parts.append("\n---\n\n")
+          summary_parts.append("## ⚙️ Configuración Actual\n\n")
+          summary_parts.append("```yaml\n")
+          summary_parts.append(f"schedule: {schedule}\n")
+          summary_parts.append(f"total_ecosystems: {count}\n")
+          summary_parts.append("```\n")
+
+          summary_parts.append("\n---\n\n")
+          summary_parts.append("<details>\n")
+          summary_parts.append("<summary>📖 <b>¿Qué hace Dependabot?</b></summary>\n\n")
+          summary_parts.append("Dependabot mantiene tus dependencias actualizadas automáticamente:\n\n")
+          summary_parts.append("- 🔍 **Escanea** tus archivos de dependencias regularmente\n")
+          summary_parts.append("- 🆕 **Detecta** nuevas versiones disponibles\n")
+          summary_parts.append("- 🔒 **Identifica** vulnerabilidades de seguridad\n")
+          summary_parts.append("- 🚀 **Crea PRs** automáticamente con las actualizaciones\n")
+          summary_parts.append("- ✅ **Ejecuta tests** en los PRs (si están configurados)\n")
+          summary_parts.append("- 🎯 **Respeta** semantic versioning\n\n")
+          summary_parts.append("</details>\n\n")
+
+          summary_parts.append("<details>\n")
+          summary_parts.append("<summary>🛠️ <b>Personalizar Configuración</b></summary>\n\n")
+          summary_parts.append("Para modificar la configuración, edita el workflow que llama a este reusable:\n\n")
+          summary_parts.append("```yaml\n")
+          summary_parts.append("with:\n")
+          summary_parts.append("  schedule: 'daily'  # Cambiar frecuencia\n")
+          summary_parts.append("  pr_limit: 10       # Ajustar límite de PRs\n")
+          summary_parts.append("  ecosystems: |      # Modificar ecosistemas\n")
+          summary_parts.append("    [\n")
+          summary_parts.append('      {"ecosystem": "pip", "directory": "/api"}\n')
+          summary_parts.append("    ]\n")
+          summary_parts.append("```\n\n")
+          summary_parts.append("</details>\n\n")
+
+          summary_parts.append("---\n\n")
+          summary_parts.append("**🎉 Configuración completada exitosamente!**\n\n")
+          summary_parts.append("> 💡 **Tip**: Usa `workflow_dispatch` en el workflow llamador para regenerar esta configuración manualmente cuando sea necesario.\n")
+
+          # Escribir al GITHUB_STEP_SUMMARY
+          summary = ''.join(summary_parts)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'w') as f:
+              f.write(summary)
+
+          print("✅ Summary generado correctamente")
+          SCRIPT_EOF
+
+          # Ejecutar el script con las variables de entorno
+          ECOSYSTEMS_JSON='${{ steps.generate.outputs.ecosystems_json }}' \
+          ECOSYSTEMS_COUNT='${{ steps.generate.outputs.ecosystems_count }}' \
+          SCHEDULE='${{ steps.generate.outputs.schedule }}' \
+          TIMESTAMP='${{ steps.generate.outputs.timestamp }}' \
+          COMMIT_STATUS='${{ steps.commit.outputs.changes_detected }}' \
+          COMMIT_SHA='${{ steps.commit.outputs.commit_hash }}' \
+          GITHUB_REPOSITORY='${{ github.repository }}' \
+          GITHUB_REF_NAME='${{ github.ref_name }}' \
+          python3 /tmp/generate_summary.py
