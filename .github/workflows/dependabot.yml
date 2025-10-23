@@ -7,13 +7,13 @@ on:
         required: true
         type: string
         description: 'JSON con configuraciones de ecosistemas'
-      
+
       schedule:
         required: false
         type: string
         default: 'weekly'
         description: 'Frecuencia de actualizaciones (daily, weekly, monthly)'
-      
+
       pr_limit:
         required: false
         type: number
@@ -25,29 +25,33 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Generate Dependabot Config
+        id: generate
         run: |
           python3 << 'EOF'
-          import yaml, json, sys
+          import yaml, json, sys, os
           from pathlib import Path
-          
+          from datetime import datetime
+
           # Parsear configuración
           try:
               ecosystems = json.loads('''${{ inputs.ecosystems }}''')
           except json.JSONDecodeError as e:
               print(f"::error::JSON inválido: {e}")
               sys.exit(1)
-          
+
           # Generar configuración
           config = {
               'version': 2,
               'updates': []
           }
+
+          ecosystems_summary = []
           
           for eco in ecosystems:
               entry = {
@@ -56,30 +60,96 @@ jobs:
                   'schedule': {'interval': '${{ inputs.schedule }}'},
                   'open-pull-requests-limit': eco.get('pr_limit', ${{ inputs.pr_limit }})
               }
-              
+
               # Labels opcionales
+              labels = []
               if 'labels' in eco:
-                  entry['labels'] = eco['labels'].split(',')
-              
+                  labels = eco['labels'].split(',')
+                  entry['labels'] = labels
+
               # Commit prefix opcional
+              prefix = 'chore'
               if 'prefix' in eco:
-                  entry['commit-message'] = {'prefix': eco['prefix']}
-              
+                  prefix = eco['prefix']
+                  entry['commit-message'] = {'prefix': prefix}
+
               config['updates'].append(entry)
-          
+              
+              # Guardar info para el summary
+              ecosystems_summary.append({
+                  'ecosystem': eco['ecosystem'],
+                  'directory': eco.get('directory', '/'),
+                  'pr_limit': eco.get('pr_limit', ${{ inputs.pr_limit }}),
+                  'labels': ', '.join(labels) if labels else 'dependencies',
+                  'prefix': prefix
+              })
+
           # Guardar archivo
           Path('.github').mkdir(exist_ok=True)
           with open('.github/dependabot.yml', 'w') as f:
               yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-          
+
           print(f"::notice::✅ Configurados {len(ecosystems)} ecosistemas")
+          
+          # Guardar outputs para el summary
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"ecosystems_count={len(ecosystems)}\n")
+              f.write(f"ecosystems_json={json.dumps(ecosystems_summary)}\n")
+              f.write(f"schedule=${{ inputs.schedule }}\n")
+              f.write(f"timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+          
+          # Mostrar configuración generada
+          print("\n📋 Configuración generada:")
           print(yaml.dump(config, default_flow_style=False))
           EOF
-      
+
       - name: Commit Changes
         uses: stefanzweifel/git-auto-commit-action@v5
+        id: commit
         with:
           commit_message: 'chore: update Dependabot configuration [skip ci]'
           file_pattern: '.github/dependabot.yml'
           commit_user_name: 'github-actions[bot]'
           commit_user_email: '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Generate Summary
+        if: always()
+        run: |
+          python3 << 'EOF'
+          import json, os
+
+          # Leer outputs
+          ecosystems_json = '''${{ steps.generate.outputs.ecosystems_json }}'''
+          ecosystems = json.loads(ecosystems_json) if ecosystems_json else []
+          count = "${{ steps.generate.outputs.ecosystems_count }}"
+          schedule = "${{ steps.generate.outputs.schedule }}"
+          timestamp = "${{ steps.generate.outputs.timestamp }}"
+          commit_status = "${{ steps.commit.outputs.changes_detected }}"
+          commit_sha = "${{ steps.commit.outputs.commit_hash }}"
+          
+          # Iconos por ecosistema
+          icons = {
+              'npm': '📦',
+              'yarn': '🧶',
+              'pnpm': '📦',
+              'pip': '🐍',
+              'docker': '🐳',
+              'github-actions': '⚡',
+              'maven': '☕',
+              'gradle': '🐘',
+              'composer': '🎼',
+              'bundler': '💎',
+              'cargo': '🦀',
+              'gomod': '🐹',
+              'nuget': '📘'
+          }
+
+          # Determinar estado
+          if commit_status == "true":
+              status_badge = "✅ **Configuración Actualizada**"
+              status_color = "🟢"
+          else:
+              status_badge = "ℹ️ **Sin Cambios**"
+              status_color = "🔵"
+
+          summary = f"""
