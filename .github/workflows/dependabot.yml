@@ -1,3 +1,4 @@
+---
 name: Setup Dependabot
 
 on:
@@ -25,15 +26,92 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: read  # Para leer labels del repositorio
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate Labels
+        id: validate_labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > /tmp/validate_labels.py << 'SCRIPT_EOF'
+          import json, os, subprocess, sys
+
+          # Obtener labels existentes del repositorio
+          repo = os.getenv('GITHUB_REPOSITORY')
+          
+          try:
+              result = subprocess.run(
+                  ['gh', 'label', 'list', '--repo', repo, '--json', 'name', '--limit', '1000'],
+                  capture_output=True,
+                  text=True,
+                  check=True
+              )
+              existing_labels = {label['name'].lower() for label in json.loads(result.stdout)}
+              print(f"::notice::📋 Encontrados {len(existing_labels)} labels en el repositorio")
+          except Exception as e:
+              print(f"::warning::No se pudieron obtener los labels: {e}")
+              existing_labels = set()
+
+          # Parsear ecosistemas
+          try:
+              ecosystems = json.loads('''${{ inputs.ecosystems }}''')
+          except json.JSONDecodeError as e:
+              print(f"::error::JSON inválido: {e}")
+              sys.exit(1)
+
+          # Validar labels por ecosistema
+          validation_results = []
+          missing_labels = set()
+          
+          for eco in ecosystems:
+              if 'labels' not in eco:
+                  continue
+                  
+              requested_labels = [l.strip() for l in eco['labels'].split(',')]
+              valid_labels = []
+              invalid_labels = []
+              
+              for label in requested_labels:
+                  if label.lower() in existing_labels:
+                      valid_labels.append(label)
+                  else:
+                      invalid_labels.append(label)
+                      missing_labels.add(label)
+              
+              validation_results.append({
+                  'ecosystem': eco['ecosystem'],
+                  'directory': eco.get('directory', '/'),
+                  'valid_labels': valid_labels,
+                  'invalid_labels': invalid_labels,
+                  'all_valid': len(invalid_labels) == 0
+              })
+          
+          # Guardar resultados
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"validation_results={json.dumps(validation_results)}\n")
+              f.write(f"missing_labels={json.dumps(sorted(list(missing_labels)))}\n")
+              f.write(f"has_missing_labels={'true' if missing_labels else 'false'}\n")
+          
+          # Mostrar warnings
+          if missing_labels:
+              print(f"::warning::⚠️ Se encontraron {len(missing_labels)} labels que no existen")
+              for label in sorted(missing_labels):
+                  print(f"::warning::  - {label}")
+          else:
+              print("::notice::✅ Todos los labels existen en el repositorio")
+          
+          SCRIPT_EOF
+
+          python3 /tmp/validate_labels.py
+
       - name: Generate Dependabot Config
         id: generate
         run: |
-          python3 << 'EOF'
+          cat > /tmp/generate_config.py << 'SCRIPT_EOF'
           import yaml, json, sys, os
           from pathlib import Path
           from datetime import datetime
@@ -41,9 +119,16 @@ jobs:
           # Parsear configuración
           try:
               ecosystems = json.loads('''${{ inputs.ecosystems }}''')
+              validation_results = json.loads('''${{ steps.validate_labels.outputs.validation_results }}''')
           except json.JSONDecodeError as e:
               print(f"::error::JSON inválido: {e}")
               sys.exit(1)
+
+          # Crear mapa de validación
+          validation_map = {
+              f"{v['ecosystem']}-{v['directory']}": v 
+              for v in validation_results
+          }
 
           # Generar configuración
           config = {
@@ -54,6 +139,9 @@ jobs:
           ecosystems_summary = []
           
           for eco in ecosystems:
+              key = f"{eco['ecosystem']}-{eco.get('directory', '/')}"
+              validation = validation_map.get(key, {'valid_labels': [], 'invalid_labels': []})
+              
               entry = {
                   'package-ecosystem': eco['ecosystem'],
                   'directory': eco.get('directory', '/'),
@@ -61,11 +149,14 @@ jobs:
                   'open-pull-requests-limit': eco.get('pr_limit', ${{ inputs.pr_limit }})
               }
 
-              # Labels opcionales
-              labels = []
-              if 'labels' in eco:
-                  labels = eco['labels'].split(',')
-                  entry['labels'] = labels
+              # Solo usar labels válidos
+              valid_labels = validation.get('valid_labels', [])
+              invalid_labels = validation.get('invalid_labels', [])
+              
+              if valid_labels:
+                  entry['labels'] = valid_labels
+                  if invalid_labels:
+                      print(f"::warning::{eco['ecosystem']} ({eco.get('directory', '/')}): Omitidos labels inválidos: {', '.join(invalid_labels)}")
 
               # Commit prefix opcional
               prefix = 'chore'
@@ -74,13 +165,14 @@ jobs:
                   entry['commit-message'] = {'prefix': prefix}
 
               config['updates'].append(entry)
-              
+
               # Guardar info para el summary
               ecosystems_summary.append({
                   'ecosystem': eco['ecosystem'],
                   'directory': eco.get('directory', '/'),
                   'pr_limit': eco.get('pr_limit', ${{ inputs.pr_limit }}),
-                  'labels': ', '.join(labels) if labels else 'dependencies',
+                  'valid_labels': ', '.join(valid_labels) if valid_labels else 'dependencies',
+                  'invalid_labels': ', '.join(invalid_labels) if invalid_labels else '',
                   'prefix': prefix
               })
 
@@ -90,18 +182,20 @@ jobs:
               yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
           print(f"::notice::✅ Configurados {len(ecosystems)} ecosistemas")
-          
+
           # Guardar outputs para el summary
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"ecosystems_count={len(ecosystems)}\n")
               f.write(f"ecosystems_json={json.dumps(ecosystems_summary)}\n")
               f.write(f"schedule=${{ inputs.schedule }}\n")
               f.write(f"timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
-          
+
           # Mostrar configuración generada
           print("\n📋 Configuración generada:")
           print(yaml.dump(config, default_flow_style=False))
-          EOF
+          SCRIPT_EOF
+
+          python3 /tmp/generate_config.py
 
       - name: Commit Changes
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -121,6 +215,8 @@ jobs:
           # Leer outputs
           ecosystems_json = os.getenv('ECOSYSTEMS_JSON', '[]')
           ecosystems = json.loads(ecosystems_json) if ecosystems_json else []
+          missing_labels = json.loads(os.getenv('MISSING_LABELS', '[]'))
+          has_missing = os.getenv('HAS_MISSING_LABELS', 'false')
           count = os.getenv('ECOSYSTEMS_COUNT', '0')
           schedule = os.getenv('SCHEDULE', 'weekly')
           timestamp = os.getenv('TIMESTAMP', 'N/A')
@@ -131,19 +227,10 @@ jobs:
 
           # Iconos por ecosistema
           icons = {
-              'npm': '📦',
-              'yarn': '🧶',
-              'pnpm': '📦',
-              'pip': '🐍',
-              'docker': '🐳',
-              'github-actions': '⚡',
-              'maven': '☕',
-              'gradle': '🐘',
-              'composer': '🎼',
-              'bundler': '💎',
-              'cargo': '🦀',
-              'gomod': '🐹',
-              'nuget': '📘'
+              'npm': '📦', 'yarn': '🧶', 'pnpm': '📦', 'pip': '🐍',
+              'docker': '🐳', 'github-actions': '⚡', 'maven': '☕',
+              'gradle': '🐘', 'composer': '🎼', 'bundler': '💎',
+              'cargo': '🦀', 'gomod': '🐹', 'nuget': '📘'
           }
 
           # Determinar estado
@@ -161,6 +248,11 @@ jobs:
           
           summary_parts.append("# 🤖 Dependabot Configuration Report\n")
           summary_parts.append(f"{status_badge}\n")
+          
+          # Advertencia de labels faltantes
+          if has_missing == 'true':
+              summary_parts.append("\n> ⚠️ **Advertencia**: Algunos labels configurados no existen en el repositorio\n")
+          
           summary_parts.append("\n---\n\n")
           summary_parts.append("## 📊 Resumen de Configuración\n\n")
           summary_parts.append("| Métrica | Valor |\n")
@@ -176,18 +268,45 @@ jobs:
 
           summary_parts.append("\n---\n\n")
           summary_parts.append("## 🎯 Ecosistemas Configurados\n\n")
-          summary_parts.append("| Ecosistema | Directorio | Límite PRs | Labels | Prefix |\n")
-          summary_parts.append("|------------|------------|------------|--------|--------|\n")
+          summary_parts.append("| Ecosistema | Directorio | PRs | Labels Válidos | Labels Omitidos | Prefix |\n")
+          summary_parts.append("|------------|------------|-----|----------------|-----------------|--------|\n")
 
           for eco in ecosystems:
               icon = icons.get(eco['ecosystem'], '📦')
-              summary_parts.append(f"| {icon} **{eco['ecosystem']}** | `{eco['directory']}` | {eco['pr_limit']} | `{eco['labels']}` | `{eco['prefix']}` |\n")
+              valid = eco.get('valid_labels', 'dependencies')
+              invalid = eco.get('invalid_labels', '')
+              
+              invalid_cell = f"⚠️ `{invalid}`" if invalid else "✅ Todos"
+              
+              summary_parts.append(
+                  f"| {icon} **{eco['ecosystem']}** | "
+                  f"`{eco['directory']}` | "
+                  f"{eco['pr_limit']} | "
+                  f"`{valid}` | "
+                  f"{invalid_cell} | "
+                  f"`{eco['prefix']}` |\n"
+              )
+
+          # Sección de labels faltantes
+          if has_missing == 'true':
+              summary_parts.append("\n---\n\n")
+              summary_parts.append("## ⚠️ Labels Faltantes\n\n")
+              summary_parts.append("Los siguientes labels fueron omitidos porque no existen en el repositorio:\n\n")
+              summary_parts.append("| Label | Acción Recomendada |\n")
+              summary_parts.append("|-------|--------------------|\n")
+              
+              for label in missing_labels:
+                  create_url = f"https://github.com/{repo}/labels/new?name={label}&color=0366d6"
+                  summary_parts.append(f"| `{label}` | [➕ Crear Label]({create_url}) |\n")
+              
+              summary_parts.append("\n> 💡 **Recomendación**: Crea los labels faltantes para que Dependabot los use en futuros PRs.\n")
 
           summary_parts.append("\n---\n\n")
           summary_parts.append("## 🔗 Enlaces Útiles\n\n")
           summary_parts.append("| Recurso | Enlace |\n")
           summary_parts.append("|---------|--------|\n")
           summary_parts.append(f"| 📄 **Configuración Generada** | [`.github/dependabot.yml`](https://github.com/{repo}/blob/{ref_name}/.github/dependabot.yml) |\n")
+          summary_parts.append(f"| 🏷️ **Gestionar Labels** | [Repository Labels](https://github.com/{repo}/labels) |\n")
           summary_parts.append(f"| 🔄 **Monitorear Actualizaciones** | [Dependency Graph](https://github.com/{repo}/network/updates) |\n")
           summary_parts.append(f"| 🔍 **Pull Requests de Dependabot** | [Ver PRs](https://github.com/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot) |\n")
           summary_parts.append(f"| 🛡️ **Alertas de Seguridad** | [Security Advisories](https://github.com/{repo}/security/dependabot) |\n")
@@ -195,7 +314,14 @@ jobs:
 
           summary_parts.append("\n---\n\n")
           summary_parts.append("## 📋 Próximos Pasos\n\n")
-          summary_parts.append(f"1. ✅ **Revisar configuración**: Verifica que todos los ecosistemas estén correctamente configurados\n")
+          
+          if has_missing == 'true':
+              summary_parts.append("1. 🏷️ **Crear labels faltantes**: Usa los enlaces de la tabla anterior\n")
+              summary_parts.append("2. 🔄 **Re-ejecutar workflow**: Para aplicar los nuevos labels\n")
+              summary_parts.append(f"3. ✅ **Revisar configuración**: Verifica que todos los ecosistemas estén correctamente configurados\n")
+          else:
+              summary_parts.append(f"1. ✅ **Revisar configuración**: Verifica que todos los ecosistemas estén correctamente configurados\n")
+          
           summary_parts.append(f"2. ⏳ **Esperar primera actualización**: Dependabot ejecutará su primer scan según el schedule configurado (`{schedule}`)\n")
           summary_parts.append("3. 🔔 **Configurar notificaciones**: Ajusta tus preferencias en [Settings → Notifications](https://github.com/settings/notifications)\n")
           summary_parts.append("4. 👀 **Monitorear PRs**: Revisa y aprueba los pull requests generados automáticamente\n")
@@ -206,6 +332,8 @@ jobs:
           summary_parts.append("```yaml\n")
           summary_parts.append(f"schedule: {schedule}\n")
           summary_parts.append(f"total_ecosystems: {count}\n")
+          if has_missing == 'true':
+              summary_parts.append(f"missing_labels: {len(missing_labels)}\n")
           summary_parts.append("```\n")
 
           summary_parts.append("\n---\n\n")
@@ -249,6 +377,8 @@ jobs:
           # Ejecutar el script con las variables de entorno
           ECOSYSTEMS_JSON='${{ steps.generate.outputs.ecosystems_json }}' \
           ECOSYSTEMS_COUNT='${{ steps.generate.outputs.ecosystems_count }}' \
+          MISSING_LABELS='${{ steps.validate_labels.outputs.missing_labels }}' \
+          HAS_MISSING_LABELS='${{ steps.validate_labels.outputs.has_missing_labels }}' \
           SCHEDULE='${{ steps.generate.outputs.schedule }}' \
           TIMESTAMP='${{ steps.generate.outputs.timestamp }}' \
           COMMIT_STATUS='${{ steps.commit.outputs.changes_detected }}' \
