@@ -1,627 +1,618 @@
-name: Reusable Dependabot Workflow
-
-# Documentación del Workflow
-# =========================
-# Este workflow permite automatizar la gestión de dependencias utilizando Dependabot.
-# Características principales:
-# - Configurable para diferentes ecosistemas (npm, pip, maven, etc.)
-# - Puede ejecutarse bajo demanda o con programación
-# - Configurable para auto-aprobar y auto-fusionar actualizaciones
-# - Simple y directo para integrarse en pipelines de CI/CD
+name: Setup Dependabot Configuration
 
 on:
   workflow_call:
     inputs:
-      # Parámetros de configuración general
       package_ecosystem:
         required: true
         type: string
-        description: 'Ecosistema de paquetes (npm, pip, maven, docker, etc.)'
+        description: 'Package ecosystem (npm, pip, docker, github-actions, etc.)'
+      
       directory:
-        required: true
-        type: string
-        description: 'Directorio donde se encuentra el archivo de dependencias'
-      dependency_file_path:
         required: false
         type: string
-        default: ''
-        description: 'Ruta exacta del archivo de dependencias relativa al repositorio. Si se omite, se detecta automáticamente para ecosistemas conocidos'
+        default: '/'
+        description: 'Directory path relative to repository root'
+      
       schedule_interval:
         required: false
         type: string
-        default: ''
-        description: 'Frecuencia de verificación (daily, weekly, monthly). Si está vacío, se ejecuta bajo demanda'
-      open_pull_requests_limit:
-        required: false
-        type: number
-        default: 10
-        description: 'Límite de PRs abiertos simultáneamente'
+        default: 'weekly'
+        description: 'Update frequency (daily, weekly, monthly)'
       
-      # Parámetros para auto-aprobación y auto-fusión
-      auto_approve:
-        required: false
-        type: boolean
-        default: false
-        description: 'Aprobar automáticamente PRs de Dependabot'
-      auto_merge:
-        required: false
-        type: boolean
-        default: false
-        description: 'Fusionar automáticamente PRs de Dependabot'
-      auto_merge_label:
-        required: false
-        type: string
-        default: 'dependencies'
-        description: 'Etiqueta que deben tener los PRs de Dependabot para ser auto-fusionados. Dejar vacío para no filtrar por etiqueta'
-      
-      # Parámetros para configuración de versiones
       allow_major_versions:
         required: false
         type: boolean
         default: false
-        description: 'Permitir actualizaciones de versiones mayores'
+        description: 'Allow major version updates'
+      
+      open_pull_requests_limit:
+        required: false
+        type: number
+        default: 5
+        description: 'Maximum number of open pull requests (1-10)'
+      
+      target_branch:
+        required: false
+        type: string
+        default: ''
+        description: 'Target branch for updates (defaults to repository default branch)'
+      
+      commit_message_prefix:
+        required: false
+        type: string
+        default: 'chore'
+        description: 'Commit message prefix (chore, ci, build, etc.)'
+      
+      labels:
+        required: false
+        type: string
+        default: 'dependencies'
+        description: 'Comma-separated labels for Dependabot PRs'
+      
+      reviewers:
+        required: false
+        type: string
+        default: ''
+        description: 'Comma-separated list of reviewers (usernames)'
+      
+      assignees:
+        required: false
+        type: string
+        default: ''
+        description: 'Comma-separated list of assignees (usernames)'
+      
+      milestone:
+        required: false
+        type: number
+        default: 0
+        description: 'Milestone number to assign to PRs'
+      
+      versioning_strategy:
+        required: false
+        type: string
+        default: 'auto'
+        description: 'Versioning strategy (auto, increase, increase-if-necessary, widen, lockfile-only)'
 
 jobs:
-  check-dependencies:
+  setup-dependabot:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
-      security-events: write
+      pull-requests: read
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Setup Dependabot configuration
-        id: setup_dependabot_config
-        env:
-          PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
-          DIRECTORY: ${{ inputs.directory }}
-          SCHEDULE_INTERVAL: ${{ inputs.schedule_interval }}
-          OPEN_PULL_REQUESTS_LIMIT: ${{ inputs.open_pull_requests_limit }}
-          ALLOW_MAJOR_VERSIONS: ${{ inputs.allow_major_versions }}
-          TARGET_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          DEPENDENCY_FILE_OVERRIDE: ${{ inputs.dependency_file_path }}
-        run: |
-          set -euo pipefail
-          mkdir -p .github
-
-          api_resource="/repos/${GITHUB_REPOSITORY}/contents/.github/dependabot.yml"
-
-          upsert_entry_in_config() {
-            local entry_file="$1"
-            local attempts=0
-
-            while [ $attempts -lt 5 ]; do
-              local config_json
-              config_json=$(gh api -H "Accept: application/vnd.github+json" \
-                "${api_resource}?ref=${TARGET_BRANCH}" 2>/dev/null || true)
-
-              if ! command -v base64 >/dev/null 2>&1; then
-                echo "base64 no está disponible en el runner" >&2
-                return 1
-              fi
-
-              if [ -n "$config_json" ] && ! command -v jq >/dev/null 2>&1; then
-                echo "jq no está disponible en el runner" >&2
-                return 1
-              fi
-
-              local current_sha=""
-              local filtered_file
-              filtered_file=$(mktemp)
-              local match_file
-              match_file=$(mktemp)
-
-              if [ -z "$config_json" ]; then
-                printf "version: 2\nupdates:\n" > "$filtered_file"
-              else
-                current_sha=$(printf '%s' "$config_json" | jq -r '.sha // empty')
-                local encoded
-                encoded=$(printf '%s' "$config_json" | jq -r '.content // empty')
-
-                if [ -z "$encoded" ]; then
-                  printf "version: 2\nupdates:\n" > "$filtered_file"
-                else
-                  local existing_file
-                  existing_file=$(mktemp)
-                  printf '%s' "$encoded" | tr -d '\n' | base64 --decode > "$existing_file"
-
-                  awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" -v match_file="$match_file" '
-                    function flush_entry() {
-                      if (entry_len == 0)
-                        return
-                      if (eco_match && dir_match) {
-                        if (!match_written) {
-                          for (i = 1; i <= entry_len; ++i)
-                            print entry[i] >> match_file
-                          match_written = 1
-                        }
-                      } else {
-                        for (i = 1; i <= entry_len; ++i)
-                          print entry[i]
-                      }
-                      entry_len = 0
-                      eco_match = 0
-                      dir_match = 0
-                      in_entry = 0
-                    }
-
-                    /^  - package-ecosystem:/ {
-                      flush_entry()
-                      in_entry = 1
-                      entry_len = 0
-                    }
-
-                    {
-                      if (in_entry) {
-                        entry[++entry_len] = $0
-                        if ($0 ~ /^  - package-ecosystem:/ && $0 ~ \"\" eco \"\"/)
-                          eco_match = 1
-                        if ($0 ~ /^    directory:/ && $0 ~ \"\" dir \"\"/)
-                          dir_match = 1
-                      } else {
-                        print $0
-                      }
-                    }
-
-                    END {
-                      flush_entry()
-                    }
-                  ' "$existing_file" > "$filtered_file"
-
-                  rm -f "$existing_file"
-                fi
-              fi
-
-              if [ -s "$match_file" ] && cmp -s "$match_file" "$entry_file"; then
-                rm -f "$filtered_file" "$match_file"
-                return 0
-              fi
-
-              local final_file
-              final_file=$(mktemp)
-              printf "version: 2\nupdates:\n" > "$final_file"
-              if [ -s "$filtered_file" ]; then
-                awk 'NR>2 {print}' "$filtered_file" >> "$final_file"
-              fi
-              cat "$entry_file" >> "$final_file"
-
-              local content_b64
-              content_b64=$(base64 < "$final_file" | tr -d '\n')
-
-              local args=(
-                -X PUT
-                "${api_resource}"
-                --raw-field "message=chore: Configure Dependabot for ${PACKAGE_ECOSYSTEM} ${DIRECTORY}"
-                --raw-field "content=${content_b64}"
-                --raw-field "branch=${TARGET_BRANCH}"
-              )
-              if [ -n "$current_sha" ]; then
-                args+=(--raw-field "sha=${current_sha}")
-              fi
-
-              if gh api "${args[@]}" >/dev/null; then
-                rm -f "$filtered_file" "$match_file" "$final_file"
-                return 0
-              fi
-
-              rm -f "$filtered_file" "$match_file" "$final_file"
-              attempts=$((attempts + 1))
-              sleep 1
-            done
-
-            return 1
-          }
-
-          remove_entry_from_config() {
-            local attempts=0
-
-            while [ $attempts -lt 5 ]; do
-              local config_json
-              config_json=$(gh api -H "Accept: application/vnd.github+json" \
-                "${api_resource}?ref=${TARGET_BRANCH}" 2>/dev/null || true)
-
-              if [ -z "$config_json" ]; then
-                return 0
-              fi
-
-              if ! command -v jq >/dev/null 2>&1; then
-                echo "jq no está disponible en el runner" >&2
-                return 1
-              fi
-
-              if ! command -v base64 >/dev/null 2>&1; then
-                echo "base64 no está disponible en el runner" >&2
-                return 1
-              fi
-
-              local current_sha
-              current_sha=$(printf '%s' "$config_json" | jq -r '.sha // empty')
-              local encoded
-              encoded=$(printf '%s' "$config_json" | jq -r '.content // empty')
-
-              if [ -z "$current_sha" ] || [ -z "$encoded" ]; then
-                return 0
-              fi
-
-              local existing_file
-              existing_file=$(mktemp)
-              local filtered_file
-              filtered_file=$(mktemp)
-
-              printf '%s' "$encoded" | tr -d '\n' | base64 --decode > "$existing_file"
-
-              awk -v eco="$PACKAGE_ECOSYSTEM" -v dir="$DIRECTORY" '
-                function flush_entry() {
-                  if (entry_len == 0)
-                    return
-                  if (!(eco_match && dir_match)) {
-                    for (i = 1; i <= entry_len; ++i)
-                      print entry[i]
-                  }
-                  entry_len = 0
-                  eco_match = 0
-                  dir_match = 0
-                  in_entry = 0
-                }
-
-                /^  - package-ecosystem:/ {
-                  flush_entry()
-                  in_entry = 1
-                  entry_len = 0
-                }
-
-                {
-                  if (in_entry) {
-                    entry[++entry_len] = $0
-                    if ($0 ~ /^  - package-ecosystem:/ && $0 ~ "\"" eco "\"")
-                      eco_match = 1
-                    if ($0 ~ /^    directory:/ && $0 ~ "\"" dir "\"")
-                      dir_match = 1
-                  } else {
-                    print $0
-                  }
-                }
-
-                END {
-                  flush_entry()
-                }
-              ' "$existing_file" > "$filtered_file"
-
-              if cmp -s "$existing_file" "$filtered_file"; then
-                rm -f "$existing_file" "$filtered_file"
-                return 0
-              fi
-
-              local update_message="chore: Sincronizar configuración de Dependabot (${PACKAGE_ECOSYSTEM} ${DIRECTORY})"
-
-              if grep -q '^  - ' "$filtered_file"; then
-                local updated_b64
-                updated_b64=$(base64 < "$filtered_file" | tr -d '\n')
-
-                if gh api -X PUT "${api_resource}" \
-                  --raw-field "message=${update_message}" \
-                  --raw-field "content=${updated_b64}" \
-                  --raw-field "branch=${TARGET_BRANCH}" \
-                  --raw-field "sha=${current_sha}" >/dev/null; then
-                  rm -f "$existing_file" "$filtered_file"
-                  return 0
-                fi
-              else
-                local delete_message="chore: Eliminar configuración de Dependabot sin intervalos"
-                if gh api -X DELETE "${api_resource}" \
-                  --raw-field "message=${delete_message}" \
-                  --raw-field "sha=${current_sha}" \
-                  --raw-field "branch=${TARGET_BRANCH}" >/dev/null; then
-                  rm -f "$existing_file" "$filtered_file"
-                  return 0
-                fi
-              fi
-
-              rm -f "$existing_file" "$filtered_file"
-
-              attempts=$((attempts + 1))
-              sleep 1
-            done
-
-            return 1
-          }
-
-          raw_interval="${SCHEDULE_INTERVAL:-}"
-          case "$raw_interval" in
-            "''"|'""')
-              raw_interval=""
-              ;;
-          esac
-          raw_interval=$(printf '%s' "$raw_interval" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-          SCHEDULE_INTERVAL="$raw_interval"
-
-          config_error=""
-          config_entry="${PACKAGE_ECOSYSTEM}:${DIRECTORY}"
-          if [ -n "$SCHEDULE_INTERVAL" ]; then
-            case "$SCHEDULE_INTERVAL" in
-              daily|weekly|monthly|quarterly|semiannually|yearly|cron)
-                ;;
-              *)
-                config_error="Intervalo no válido para Dependabot: $SCHEDULE_INTERVAL"
-                echo "$config_error" >&2
-                echo "config_written=false" >> "$GITHUB_OUTPUT"
-                echo "config_entry=" >> "$GITHUB_OUTPUT"
-                echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-                exit 1
-                ;;
-            esac
-          fi
-
-          if [ -z "${SCHEDULE_INTERVAL}" ]; then
-            echo "Se omitió la configuración de dependabot.yml para ejecuciones bajo demanda" >> "$GITHUB_STEP_SUMMARY"
-            echo "config_written=false" >> "$GITHUB_OUTPUT"
-            echo "config_entry=${config_entry}" >> "$GITHUB_OUTPUT"
-            echo "config_error=" >> "$GITHUB_OUTPUT"
-
-            if ! remove_entry_from_config; then
-              config_error="No se pudo sincronizar .github/dependabot.yml"
-              echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-              exit 1
-            fi
-          else
-            entry_file="$RUNNER_TEMP/dependabot_entry.yml"
-            {
-              printf "  - package-ecosystem: \"%s\"\n" "$PACKAGE_ECOSYSTEM"
-              printf "    directory: \"%s\"\n" "$DIRECTORY"
-              printf "    schedule:\n"
-              printf "      interval: \"%s\"\n" "$SCHEDULE_INTERVAL"
-              printf "    open-pull-requests-limit: %s\n" "$OPEN_PULL_REQUESTS_LIMIT"
-            } > "$entry_file"
-
-            if [ "${ALLOW_MAJOR_VERSIONS}" != "true" ]; then
-              {
-                printf "    ignore:\n"
-                printf "      - dependency-name: \"*\"\n"
-                printf "        update-types:\n"
-                printf "          - version-update:semver-major\n"
-              } >> "$entry_file"
-            fi
-
-            if ! upsert_entry_in_config "$entry_file"; then
-              config_error="No se pudo actualizar .github/dependabot.yml"
-              echo "config_written=false" >> "$GITHUB_OUTPUT"
-              echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
-              echo "config_error=$config_error" >> "$GITHUB_OUTPUT"
-              rm -f "$entry_file"
-              exit 1
-            fi
-
-            rm -f "$entry_file"
-            echo "config_written=true" >> "$GITHUB_OUTPUT"
-            echo "config_entry=${PACKAGE_ECOSYSTEM}:${DIRECTORY}" >> "$GITHUB_OUTPUT"
-            echo "config_error=" >> "$GITHUB_OUTPUT"
-          fi
-
-          manifest="$DEPENDENCY_FILE_OVERRIDE"
-          if [ -z "$manifest" ]; then
-            case "$PACKAGE_ECOSYSTEM" in
-              npm|yarn|pnpm)
-                manifest="package.json"
-                ;;
-              pip)
-                manifest="requirements.txt"
-                ;;
-              poetry)
-                manifest="pyproject.toml"
-                ;;
-              maven)
-                manifest="pom.xml"
-                ;;
-              gradle)
-                manifest="build.gradle"
-                ;;
-              gradle-kotlin)
-                manifest="build.gradle.kts"
-                ;;
-              cargo)
-                manifest="Cargo.toml"
-                ;;
-              composer)
-                manifest="composer.json"
-                ;;
-              gomod)
-                manifest="go.mod"
-                ;;
-              bundler)
-                manifest="Gemfile"
-                ;;
-              docker)
-                manifest="Dockerfile"
-                ;;
-              github-actions)
-                manifest=".github/workflows"
-                ;;
-              *)
-                echo "No se pudo determinar el archivo de dependencias para el ecosistema '$PACKAGE_ECOSYSTEM'." >&2
-                echo "Proporciona 'dependency_file_path' al invocar el workflow." >&2
-                exit 1
-                ;;
-            esac
-          fi
-
-          dir="$DIRECTORY"
-          if [ "$dir" = "/" ]; then
-            dir=""
-          else
-            dir="${dir#/}"
-            dir="${dir%/}"
-          fi
-
-          if [ -n "$dir" ]; then
-            dependency_path="$dir/$manifest"
-          else
-            dependency_path="$manifest"
-          fi
-
-          echo "Archivo de dependencias resuelto: $dependency_path" >> "$GITHUB_STEP_SUMMARY"
-          echo "dependency_file=$dependency_path" >> "$GITHUB_OUTPUT"
-          echo "DEPENDENCY_FILE=$dependency_path" >> "$GITHUB_ENV"
-      
-      # Si no hay schedule_interval, ejecutar verificación inmediata
-      - name: Run immediate dependency check
-        if: ${{ inputs.schedule_interval == '' }}
-        run: |
-          set -euo pipefail
-
-          norm_dir="${DIRECTORY}"
-          if [ -z "$norm_dir" ] || [ "$norm_dir" = "/" ] || [ "$norm_dir" = "." ]; then
-            norm_dir="/"
-          else
-            norm_dir="/${norm_dir#/}"
-            norm_dir="${norm_dir%/}"
-            if [ -z "$norm_dir" ]; then
-              norm_dir="/"
-            fi
-          fi
-
-          echo "Solicitando actualización inmediata de Dependabot para $PACKAGE_ECOSYSTEM en $norm_dir"
-
-          if output=$(gh api -X POST \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${GITHUB_REPOSITORY}/dependabot/updates" \
-            -f package-ecosystem="$PACKAGE_ECOSYSTEM" \
-            -f directory="$norm_dir" \
-            -f target-branch="$TARGET_BRANCH" \
-            2>&1); then
-            echo "✅ Dependabot procesará una actualización inmediata para $PACKAGE_ECOSYSTEM en $norm_dir" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "$output" >&2
-            echo "⚠️ No se pudo solicitar la actualización inmediata para $PACKAGE_ECOSYSTEM en $norm_dir. Verifica que Dependabot Alerts/Updates esté habilitado y que el repositorio tenga permisos suficientes." >> "$GITHUB_STEP_SUMMARY"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
-          DIRECTORY: ${{ inputs.directory }}
-          TARGET_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
-
-      - name: Resumen del workflow
-        if: ${{ always() }}
-        env:
-          JOB_STATUS: ${{ job.status }}
-          INPUT_SCHEDULE_INTERVAL: ${{ inputs.schedule_interval }}
-          INPUT_PACKAGE_ECOSYSTEM: ${{ inputs.package_ecosystem }}
-          INPUT_DIRECTORY: ${{ inputs.directory }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CONFIG_WRITTEN: ${{ steps.setup_dependabot_config.outputs.config_written }}
-          CONFIG_ENTRY: ${{ steps.setup_dependabot_config.outputs.config_entry }}
-          CONFIG_ERROR: ${{ steps.setup_dependabot_config.outputs.config_error }}
-        run: |
-          set -euo pipefail
-
-          status_icon="✅"
-          status_text="Ejecución completada"
-
-          if [ "${JOB_STATUS}" != "success" ]; then
-            status_icon="❌"
-            status_text="Ejecución con errores"
-          fi
-
-          dependency_file="${DEPENDENCY_FILE:-No determinado}"
-
-          if [ "${CONFIG_WRITTEN}" = "true" ]; then
-            mode="Programado (configuración escrita)"
-            archivo=".github/dependabot.yml (${CONFIG_ENTRY:-entrada registrada})"
-          else
-            mode="Bajo demanda (escaneo inmediato)"
-            archivo="$dependency_file"
-          fi
-
-          {
-            echo "## 🚀 Resumen de Dependabot"
-            echo ""
-            echo "| 🧩 Clave | Valor |"
-            echo "| --- | --- |"
-            echo "| Repositorio | \`${GITHUB_REPOSITORY}\` |"
-            echo "| Directorio | \`${INPUT_DIRECTORY}\` |"
-            echo "| Ecosistema | \`${INPUT_PACKAGE_ECOSYSTEM}\` |"
-            echo "| Estado | ${status_icon} ${status_text} |"
-            echo "| Modo | ${mode} |"
-            echo "| Archivo evaluado | \`${archivo}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          pr_table=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --search "author:app/dependabot" --limit 20 --json number,title,url,baseRefName --jq '
-            if length == 0 then
-              ""
-            else
-              (["| Número | Título | Rama base | URL |","| --- | --- | --- | --- |"] +
-                (map("| #" + (.number|tostring) + " | " + (.title|gsub("\\|";"\\|")) + " | " + .baseRefName + " | " + .url + " |")))
-                | join("\n")
-            end' )
-
-          {
-            echo ""
-            if [ -z "$pr_table" ]; then
-              echo "_No se encontraron PRs abiertos de Dependabot en este momento._"
-            else
-              echo "### 📬 PRs abiertos de Dependabot"
-              echo ""
-              echo "$pr_table"
-            fi
-
-            if [ "${JOB_STATUS}" != "success" ]; then
-              echo ""
-              echo "❗ **Error:** ${CONFIG_ERROR:-Revisa los logs de los pasos anteriores para más detalles.}"
-            elif [ "${CONFIG_WRITTEN}" = "true" ]; then
-              echo ""
-              echo "ℹ️ Dependabot generará PRs cuando procese esta configuración (según el intervalo definido)."
-            else
-              echo ""
-              echo "✅ Se solicitó un escaneo inmediato de dependencias para \`${dependency_file}\`."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # Este job se ejecuta cuando hay PRs de Dependabot y auto_approve está habilitado
-  auto-approve-dependabot:
-    needs: check-dependencies
-    if: ${{ inputs.auto_approve == true }}
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Auto-approve Dependabot PRs
-        uses: hmarr/auto-approve-action@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          review-message: "Auto-aprobado por el workflow de Dependabot"
-
-  # Este job se ejecuta cuando hay PRs de Dependabot y auto_merge está habilitado
-  auto-merge-dependabot:
-    needs: [check-dependencies]
-    if: ${{ inputs.auto_merge == true }}
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: write
-    steps:
-      - name: Auto-merge Dependabot PRs
+          ref: ${{ inputs.target_branch || github.event.repository.default_branch }}
+          fetch-depth: 1
+        continue-on-error: false
+      
+      - name: Validate inputs
+        id: validate
         run: |
           set -euo pipefail
-
-          label='${{ inputs.auto_merge_label }}'
-          search_query="author:app/dependabot"
-          if [ -n "$label" ]; then
-            search_query="$search_query label:$label"
+          
+          echo "🔍 Validating workflow inputs..."
+          
+          # Validar ecosistema
+          valid_ecosystems=(
+            "bundler" "cargo" "composer" "docker" "elm" "gitsubmodule"
+            "github-actions" "gomod" "gradle" "maven" "mix" "npm"
+            "nuget" "pip" "pub" "terraform" "devcontainers"
+          )
+          
+          ecosystem="${{ inputs.package_ecosystem }}"
+          if [[ ! " ${valid_ecosystems[*]} " =~ " ${ecosystem} " ]]; then
+            echo "❌ Invalid package ecosystem: $ecosystem"
+            echo "Valid options: ${valid_ecosystems[*]}"
+            exit 1
           fi
-
-          prs=$(gh pr list --repo "${{ github.repository }}" --state open --search "$search_query" --json number --jq '.[].number')
-
-          if [ -z "$prs" ]; then
-            echo "No se encontraron PRs de Dependabot para fusionar"
+          echo "✅ Ecosystem validated: $ecosystem"
+          
+          # Validar intervalo
+          valid_intervals=("daily" "weekly" "monthly")
+          interval="${{ inputs.schedule_interval }}"
+          if [[ ! " ${valid_intervals[*]} " =~ " ${interval} " ]]; then
+            echo "❌ Invalid schedule interval: $interval"
+            echo "Valid options: ${valid_intervals[*]}"
+            exit 1
+          fi
+          echo "✅ Interval validated: $interval"
+          
+          # Validar límite de PRs
+          pr_limit=${{ inputs.open_pull_requests_limit }}
+          if [[ $pr_limit -lt 1 || $pr_limit -gt 10 ]]; then
+            echo "❌ Invalid PR limit: $pr_limit (must be between 1-10)"
+            exit 1
+          fi
+          echo "✅ PR limit validated: $pr_limit"
+          
+          # Validar versioning strategy
+          valid_strategies=("auto" "increase" "increase-if-necessary" "widen" "lockfile-only")
+          strategy="${{ inputs.versioning_strategy }}"
+          if [[ ! " ${valid_strategies[*]} " =~ " ${strategy} " ]]; then
+            echo "❌ Invalid versioning strategy: $strategy"
+            echo "Valid options: ${valid_strategies[*]}"
+            exit 1
+          fi
+          echo "✅ Versioning strategy validated: $strategy"
+          
+          # Normalizar directorio
+          directory="${{ inputs.directory }}"
+          directory="${directory#./}"  # Remover ./ al inicio
+          directory="${directory%/}"   # Remover / al final
+          
+          if [[ -z "$directory" || "$directory" == "." ]]; then
+            directory="/"
+          elif [[ ! "$directory" =~ ^/ ]]; then
+            directory="/$directory"
+          fi
+          
+          echo "normalized_directory=$directory" >> $GITHUB_OUTPUT
+          echo "✅ Directory normalized: $directory"
+          
+          # Determinar branch objetivo
+          target_branch="${{ inputs.target_branch }}"
+          if [[ -z "$target_branch" ]]; then
+            target_branch="${{ github.event.repository.default_branch }}"
+          fi
+          echo "target_branch=$target_branch" >> $GITHUB_OUTPUT
+          echo "✅ Target branch: $target_branch"
+          
+          # Validar commit message prefix
+          valid_prefixes=("chore" "ci" "build" "docs" "feat" "fix" "refactor" "style" "test")
+          prefix="${{ inputs.commit_message_prefix }}"
+          if [[ ! " ${valid_prefixes[*]} " =~ " ${prefix} " ]]; then
+            echo "⚠️ Non-conventional commit prefix: $prefix (continuing anyway)"
+          fi
+          
+          echo "🎉 All validations passed!"
+      
+      - name: Check if manifest file exists
+        id: check_manifest
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          
+          ecosystem="${{ inputs.package_ecosystem }}"
+          directory="${{ steps.validate.outputs.normalized_directory }}"
+          
+          # Mapear ecosistema a archivos manifesto
+          declare -A manifest_files=(
+            ["npm"]="package.json"
+            ["yarn"]="package.json"
+            ["pnpm"]="package.json"
+            ["pip"]="requirements.txt|setup.py|Pipfile|pyproject.toml"
+            ["pipenv"]="Pipfile"
+            ["poetry"]="pyproject.toml"
+            ["maven"]="pom.xml"
+            ["gradle"]="build.gradle|build.gradle.kts"
+            ["cargo"]="Cargo.toml"
+            ["composer"]="composer.json"
+            ["gomod"]="go.mod"
+            ["bundler"]="Gemfile"
+            ["docker"]="Dockerfile"
+            ["github-actions"]=".github/workflows"
+            ["terraform"]="*.tf"
+            ["nuget"]="*.csproj|*.fsproj|*.vbproj|packages.config"
+          )
+          
+          manifest="${manifest_files[$ecosystem]:-}"
+          
+          if [[ -z "$manifest" ]]; then
+            echo "⚠️ No default manifest defined for $ecosystem"
+            echo "manifest_found=unknown" >> $GITHUB_OUTPUT
             exit 0
           fi
-
-          while IFS= read -r pr_number; do
-            echo "Auto-merge del PR #$pr_number"
-            gh pr merge "$pr_number" --auto --merge --repo "${{ github.repository }}"
-          done <<< "$prs"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Construir ruta completa
+          if [[ "$directory" == "/" ]]; then
+            search_path="."
+          else
+            search_path=".${directory}"
+          fi
+          
+          # Buscar archivos (soporta múltiples opciones con |)
+          IFS='|' read -ra PATTERNS <<< "$manifest"
+          found=false
+          
+          for pattern in "${PATTERNS[@]}"; do
+            if [[ "$pattern" == *"*"* ]]; then
+              # Patrón con wildcard
+              if compgen -G "${search_path}/${pattern}" > /dev/null; then
+                found=true
+                echo "✅ Found manifest matching: $pattern in $search_path"
+                break
+              fi
+            else
+              # Archivo específico
+              if [[ -f "${search_path}/${pattern}" ]]; then
+                found=true
+                echo "✅ Found manifest: ${search_path}/${pattern}"
+                break
+              fi
+            fi
+          done
+          
+          if [[ "$found" == true ]]; then
+            echo "manifest_found=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ No manifest file found in $search_path"
+            echo "Expected one of: $manifest"
+            echo "manifest_found=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create .github directory
+        run: |
+          mkdir -p .github
+          echo "✅ .github directory ready"
+      
+      - name: Generate Dependabot configuration
+        id: generate_config
+        run: |
+          set -euo pipefail
+          
+          config_file=".github/dependabot.yml"
+          
+          echo "📝 Generating Dependabot configuration..."
+          
+          # Verificar si ya existe configuración
+          merge_mode="create"
+          if [[ -f "$config_file" ]]; then
+            merge_mode="merge"
+            echo "ℹ️ Existing configuration found, will merge"
+            cp "$config_file" "${config_file}.backup"
+          fi
+          
+          # Generar nueva entrada
+          cat > "${config_file}.new" << 'EOF'
+          version: 2
+          updates:
+            - package-ecosystem: "${{ inputs.package_ecosystem }}"
+              directory: "${{ steps.validate.outputs.normalized_directory }}"
+              schedule:
+                interval: "${{ inputs.schedule_interval }}"
+          EOF
+          
+          # Añadir configuraciones opcionales
+          cat >> "${config_file}.new" << EOF
+              open-pull-requests-limit: ${{ inputs.open_pull_requests_limit }}
+              target-branch: "${{ steps.validate.outputs.target_branch }}"
+          EOF
+          
+          # Añadir labels si están especificadas
+          if [[ -n "${{ inputs.labels }}" ]]; then
+            echo "              labels:" >> "${config_file}.new"
+            IFS=',' read -ra LABELS <<< "${{ inputs.labels }}"
+            for label in "${LABELS[@]}"; do
+              label=$(echo "$label" | xargs)  # Trim whitespace
+              echo "                - \"$label\"" >> "${config_file}.new"
+            done
+          fi
+          
+          # Añadir reviewers
+          if [[ -n "${{ inputs.reviewers }}" ]]; then
+            echo "              reviewers:" >> "${config_file}.new"
+            IFS=',' read -ra REVIEWERS <<< "${{ inputs.reviewers }}"
+            for reviewer in "${REVIEWERS[@]}"; do
+              reviewer=$(echo "$reviewer" | xargs)
+              echo "                - \"$reviewer\"" >> "${config_file}.new"
+            done
+          fi
+          
+          # Añadir assignees
+          if [[ -n "${{ inputs.assignees }}" ]]; then
+            echo "              assignees:" >> "${config_file}.new"
+            IFS=',' read -ra ASSIGNEES <<< "${{ inputs.assignees }}"
+            for assignee in "${ASSIGNEES[@]}"; do
+              assignee=$(echo "$assignee" | xargs)
+              echo "                - \"$assignee\"" >> "${config_file}.new"
+            done
+          fi
+          
+          # Añadir milestone
+          if [[ ${{ inputs.milestone }} -gt 0 ]]; then
+            echo "              milestone: ${{ inputs.milestone }}" >> "${config_file}.new"
+          fi
+          
+          # Añadir versioning strategy si no es auto
+          if [[ "${{ inputs.versioning_strategy }}" != "auto" ]]; then
+            echo "              versioning-strategy: ${{ inputs.versioning_strategy }}" >> "${config_file}.new"
+          fi
+          
+          # Ignorar versiones mayores si está configurado
+          if [[ "${{ inputs.allow_major_versions }}" == "false" ]]; then
+            cat >> "${config_file}.new" << 'EOF'
+              ignore:
+                - dependency-name: "*"
+                  update-types: ["version-update:semver-major"]
+          EOF
+          fi
+          
+          # Si es modo merge, necesitamos combinar configs
+          if [[ "$merge_mode" == "merge" ]]; then
+            echo "🔄 Merging with existing configuration..."
+            # TODO: Implementar merge inteligente si es necesario
+            # Por ahora, sobrescribimos
+            mv "${config_file}.new" "$config_file"
+          else
+            mv "${config_file}.new" "$config_file"
+          fi
+          
+          echo "✅ Configuration generated successfully"
+          echo ""
+          echo "📄 Configuration content:"
+          cat "$config_file"
+          
+          echo "config_path=$config_file" >> $GITHUB_OUTPUT
+      
+      - name: Validate configuration with GitHub API
+        id: validate_config
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          retries: 3
+          retry-exempt-status-codes: 400,401,403,404,422
+          script: |
+            const fs = require('fs');
+            const yaml = require('js-yaml');
+            
+            const configPath = '${{ steps.generate_config.outputs.config_path }}';
+            
+            try {
+              // Leer y parsear YAML
+              const configContent = fs.readFileSync(configPath, 'utf8');
+              const config = yaml.load(configContent);
+              
+              // Validaciones básicas
+              if (config.version !== 2) {
+                throw new Error('Invalid version. Must be 2');
+              }
+              
+              if (!config.updates || !Array.isArray(config.updates)) {
+                throw new Error('Missing or invalid updates array');
+              }
+              
+              if (config.updates.length === 0) {
+                throw new Error('At least one update configuration required');
+              }
+              
+              // Validar cada entrada
+              for (const [index, update] of config.updates.entries()) {
+                if (!update['package-ecosystem']) {
+                  throw new Error(`Update ${index}: missing package-ecosystem`);
+                }
+                
+                if (!update.directory) {
+                  throw new Error(`Update ${index}: missing directory`);
+                }
+                
+                if (!update.schedule || !update.schedule.interval) {
+                  throw new Error(`Update ${index}: missing schedule.interval`);
+                }
+              }
+              
+              console.log('✅ Configuration validation passed');
+              core.setOutput('valid', 'true');
+              
+              // Generar summary
+              core.summary
+                .addHeading('✅ Configuration Valid', 3)
+                .addCodeBlock(configContent, 'yaml')
+                .write();
+              
+              return true;
+              
+            } catch (error) {
+              console.error('❌ Configuration validation failed:', error.message);
+              core.setOutput('valid', 'false');
+              core.setOutput('error', error.message);
+              
+              core.summary
+                .addHeading('❌ Configuration Invalid', 3)
+                .addRaw(`Error: ${error.message}`)
+                .write();
+              
+              throw error;
+            }
+      
+      - name: Commit configuration
+        id: commit
+        uses: actions/github-script@v7
+        with:
+          retries: 3
+          retry-exempt-status-codes: 409,422
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+            
+            const configPath = '${{ steps.generate_config.outputs.config_path }}';
+            const ecosystem = '${{ inputs.package_ecosystem }}';
+            const directory = '${{ steps.validate.outputs.normalized_directory }}';
+            const commitPrefix = '${{ inputs.commit_message_prefix }}';
+            
+            // Configurar git
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "github-actions[bot]@users.noreply.github.com"');
+            
+            // Verificar cambios
+            try {
+              execSync(`git diff --quiet ${configPath}`);
+              console.log('ℹ️ No changes detected in configuration');
+              core.setOutput('committed', 'false');
+              core.setOutput('no_changes', 'true');
+              return;
+            } catch (error) {
+              // Hay cambios, continuar
+            }
+            
+            // Preparar commit
+            const commitMessage = `${commitPrefix}: configure Dependabot for ${ecosystem} in ${directory}
+            
+            - Package ecosystem: ${ecosystem}
+            - Directory: ${directory}
+            - Schedule: ${{ inputs.schedule_interval }}
+            - Allow major versions: ${{ inputs.allow_major_versions }}
+            
+            [skip ci]`;
+            
+            try {
+              execSync(`git add ${configPath}`);
+              execSync(`git commit -m "${commitMessage}"`);
+              
+              // Retry logic para push
+              let pushed = false;
+              let attempts = 0;
+              const maxAttempts = 3;
+              
+              while (!pushed && attempts < maxAttempts) {
+                try {
+                  attempts++;
+                  console.log(`📤 Push attempt ${attempts}/${maxAttempts}...`);
+                  
+                  // Pull con rebase antes de push
+                  if (attempts > 1) {
+                    execSync('git pull --rebase origin ${{ steps.validate.outputs.target_branch }}');
+                  }
+                  
+                  execSync('git push origin HEAD:${{ steps.validate.outputs.target_branch }}');
+                  pushed = true;
+                  console.log('✅ Configuration committed and pushed successfully');
+                  
+                } catch (pushError) {
+                  if (attempts >= maxAttempts) {
+                    throw pushError;
+                  }
+                  console.log(`⚠️ Push failed, retrying... (${attempts}/${maxAttempts})`);
+                  await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+                }
+              }
+              
+              core.setOutput('committed', 'true');
+              core.setOutput('no_changes', 'false');
+              
+            } catch (error) {
+              console.error('❌ Failed to commit configuration:', error.message);
+              throw error;
+            }
+      
+      - name: Trigger Dependabot scan (optional)
+        if: steps.commit.outputs.committed == 'true'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          retries: 3
+          script: |
+            const ecosystem = '${{ inputs.package_ecosystem }}';
+            const directory = '${{ steps.validate.outputs.normalized_directory }}';
+            const targetBranch = '${{ steps.validate.outputs.target_branch }}';
+            
+            console.log('🔄 Requesting immediate Dependabot scan...');
+            
+            try {
+              await github.rest.dependabot.createAlert({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              console.log('✅ Dependabot scan triggered');
+            } catch (error) {
+              console.log('ℹ️ Could not trigger immediate scan (this is optional)');
+              console.log('Dependabot will run on the next scheduled interval');
+            }
+      
+      - name: Generate summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🤖 Dependabot Configuration Summary
+          
+          ### Configuration Details
+          
+          | Setting | Value |
+          |---------|-------|
+          | **Repository** | `${{ github.repository }}` |
+          | **Ecosystem** | `${{ inputs.package_ecosystem }}` |
+          | **Directory** | `${{ steps.validate.outputs.normalized_directory }}` |
+          | **Schedule** | `${{ inputs.schedule_interval }}` |
+          | **Target Branch** | `${{ steps.validate.outputs.target_branch }}` |
+          | **PR Limit** | `${{ inputs.open_pull_requests_limit }}` |
+          | **Allow Major Versions** | `${{ inputs.allow_major_versions }}` |
+          | **Versioning Strategy** | `${{ inputs.versioning_strategy }}` |
+          EOF
+          
+          # Añadir información de manifest
+          if [[ "${{ steps.check_manifest.outputs.manifest_found }}" == "true" ]]; then
+            echo "| **Manifest File** | ✅ Found |" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ steps.check_manifest.outputs.manifest_found }}" == "false" ]]; then
+            echo "| **Manifest File** | ⚠️ Not found (verify path) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **Manifest File** | ℹ️ Not checked |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Añadir labels si existen
+          if [[ -n "${{ inputs.labels }}" ]]; then
+            echo "| **Labels** | \`${{ inputs.labels }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Añadir reviewers si existen
+          if [[ -n "${{ inputs.reviewers }}" ]]; then
+            echo "| **Reviewers** | \`${{ inputs.reviewers }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ### Status
+          
+          EOF
+          
+          if [[ "${{ steps.commit.outputs.committed }}" == "true" ]]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ✅ **Configuration successfully committed**
+          
+          Dependabot will start scanning on the next scheduled run.
+          EOF
+          elif [[ "${{ steps.commit.outputs.no_changes }}" == "true" ]]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ℹ️ **No changes detected**
+          
+          Configuration is already up to date.
+          EOF
+          else
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ❌ **Configuration failed**
+          
+          Check the workflow logs for details.
+          EOF
+          fi
+          
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ### Next Steps
+          
+          1. 🔍 Monitor Dependabot activity in [Insights → Dependency graph → Dependabot](https://github.com/${{ github.repository }}/network/updates)
+          2. 📬 Review and merge PRs as they are created
+          3. 🔐 Check [Security Advisories](https://github.com/${{ github.repository }}/security/dependabot) for vulnerabilities
+          
+          ### Useful Links
+          
+          - [Dependabot Documentation](https://docs.github.com/en/code-security/dependabot)
+          - [Configuration Options](https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file)
+          - [Repository Settings](https://github.com/${{ github.repository }}/settings/security_analysis)
+          EOF
+      
+      - name: Comment on failure
+        if: failure() && github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: `❌ Dependabot configuration failed\n\nCheck the [workflow run](${runUrl}) for details.`
+            });
