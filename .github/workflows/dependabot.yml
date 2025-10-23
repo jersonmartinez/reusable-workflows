@@ -165,19 +165,16 @@ jobs:
           from pathlib import Path
           from datetime import datetime
 
-          # Parsear configuración
+          # Usar ecosistemas VALIDADOS (ya sin labels inválidos)
           try:
-              ecosystems = json.loads('''${{ inputs.ecosystems }}''')
-              validation_results = json.loads('''${{ steps.validate_labels.outputs.validation_results }}''')
+              ecosystems = json.loads('''${{ steps.validate_labels.outputs.validated_ecosystems }}''')
           except json.JSONDecodeError as e:
-              print(f"::error::JSON inválido: {e}")
+              print(f"::error title=JSON Inválido::Error al parsear ecosistemas validados: {e}")
               sys.exit(1)
 
-          # Crear mapa de validación
-          validation_map = {
-              f"{v['ecosystem']}-{v['directory']}": v 
-              for v in validation_results
-          }
+          if not ecosystems:
+              print(f"::error title=Sin Ecosistemas::No hay ecosistemas para configurar")
+              sys.exit(1)
 
           # Generar configuración
           config = {
@@ -185,12 +182,7 @@ jobs:
               'updates': []
           }
 
-          ecosystems_summary = []
-          
           for eco in ecosystems:
-              key = f"{eco['ecosystem']}-{eco.get('directory', '/')}"
-              validation = validation_map.get(key, {'valid_labels': [], 'invalid_labels': []})
-              
               entry = {
                   'package-ecosystem': eco['ecosystem'],
                   'directory': eco.get('directory', '/'),
@@ -198,48 +190,35 @@ jobs:
                   'open-pull-requests-limit': eco.get('pr_limit', ${{ inputs.pr_limit }})
               }
 
-              # Solo usar labels válidos
-              valid_labels = validation.get('valid_labels', [])
-              invalid_labels = validation.get('invalid_labels', [])
-              
-              if valid_labels:
-                  entry['labels'] = valid_labels
-                  if invalid_labels:
-                      print(f"::warning::{eco['ecosystem']} ({eco.get('directory', '/')}): Omitidos labels inválidos: {', '.join(invalid_labels)}")
+              # ✅ Los labels ya fueron validados en el step anterior
+              # Solo agregamos si existen
+              if 'labels' in eco and eco['labels']:
+                  labels_list = [l.strip() for l in eco['labels'].split(',')]
+                  entry['labels'] = labels_list
 
-              # Commit prefix opcional
-              prefix = 'chore'
+              # Agregar commit prefix si existe
               if 'prefix' in eco:
-                  prefix = eco['prefix']
-                  entry['commit-message'] = {'prefix': prefix}
+                  entry['commit-message'] = {'prefix': eco['prefix']}
 
               config['updates'].append(entry)
-
-              # Guardar info para el summary
-              ecosystems_summary.append({
-                  'ecosystem': eco['ecosystem'],
-                  'directory': eco.get('directory', '/'),
-                  'pr_limit': eco.get('pr_limit', ${{ inputs.pr_limit }}),
-                  'valid_labels': ', '.join(valid_labels) if valid_labels else 'dependencies',
-                  'invalid_labels': ', '.join(invalid_labels) if invalid_labels else '',
-                  'prefix': prefix
-              })
 
           # Guardar archivo
           Path('.github').mkdir(exist_ok=True)
           with open('.github/dependabot.yml', 'w') as f:
-              yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+              f.write('---\n')  # Document start para yamllint
+              yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
-          print(f"::notice::✅ Configurados {len(ecosystems)} ecosistemas")
+          # Notice de éxito (sin warnings)
+          print(f"::notice title=Configuración Generada::✅ {len(ecosystems)} ecosistemas configurados en dependabot.yml")
 
-          # Guardar outputs para el summary
+          # Guardar outputs
+          timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"ecosystems_count={len(ecosystems)}\n")
-              f.write(f"ecosystems_json={json.dumps(ecosystems_summary)}\n")
               f.write(f"schedule=${{ inputs.schedule }}\n")
-              f.write(f"timestamp={datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+              f.write(f"timestamp={timestamp}\n")
 
-          # Mostrar configuración generada
+          # Mostrar configuración generada (para debug)
           print("\n📋 Configuración generada:")
           print(yaml.dump(config, default_flow_style=False))
           SCRIPT_EOF
