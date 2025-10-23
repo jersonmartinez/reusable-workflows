@@ -3,82 +3,79 @@ name: Setup Dependabot Configuration
 on:
   workflow_call:
     inputs:
+      # Opción 1: Single ecosystem (modo legacy)
       package_ecosystem:
-        required: true
+        required: false
         type: string
-        description: 'Package ecosystem (npm, pip, docker, github-actions, etc.)'
+        description: 'Single package ecosystem'
       
       directory:
         required: false
         type: string
         default: '/'
-        description: 'Directory path relative to repository root'
+        description: 'Directory path (for single ecosystem mode)'
       
+      # Opción 2: Multiple ecosystems (modo recomendado)
+      ecosystems_config:
+        required: false
+        type: string
+        description: 'JSON array of ecosystem configurations'
+      
+      # Shared settings
       schedule_interval:
         required: false
         type: string
         default: 'weekly'
-        description: 'Update frequency (daily, weekly, monthly)'
       
       allow_major_versions:
         required: false
         type: boolean
         default: false
-        description: 'Allow major version updates'
       
       open_pull_requests_limit:
         required: false
         type: number
         default: 5
-        description: 'Maximum number of open pull requests (1-10)'
       
       target_branch:
         required: false
         type: string
         default: ''
-        description: 'Target branch for updates (defaults to repository default branch)'
       
       commit_message_prefix:
         required: false
         type: string
         default: 'chore'
-        description: 'Commit message prefix (chore, ci, build, etc.)'
       
       labels:
         required: false
         type: string
         default: 'dependencies'
-        description: 'Comma-separated labels for Dependabot PRs'
       
       reviewers:
         required: false
         type: string
         default: ''
-        description: 'Comma-separated list of reviewers (usernames)'
       
       assignees:
         required: false
         type: string
         default: ''
-        description: 'Comma-separated list of assignees (usernames)'
       
       milestone:
         required: false
         type: number
         default: 0
-        description: 'Milestone number to assign to PRs'
       
       versioning_strategy:
         required: false
         type: string
         default: 'auto'
-        description: 'Versioning strategy (auto, increase, increase-if-necessary, widen, lockfile-only)'
       
       rebase_strategy:
         required: false
         type: string
         default: 'auto'
-        description: 'Rebase strategy (auto, disabled)'
 
 jobs:
   setup-dependabot:
@@ -87,279 +84,163 @@ jobs:
       contents: write
       pull-requests: read
     
-    outputs:
-      config_updated: ${{ steps.update_config.outputs.updated }}
-      manifest_found: ${{ steps.validate.outputs.manifest_exists }}
-      dependabot_file: ${{ steps.update_config.outputs.file_path }}
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch || github.event.repository.default_branch }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
       
-      - name: Validate inputs
-        id: validate
-        run: |
-          set -euo pipefail
-          
-          # Validar package_ecosystem
-          VALID_ECOSYSTEMS="npm yarn pnpm pip pipenv poetry pub cargo bundler composer mix hex nuget gradle maven docker terraform github-actions gomod"
-          if ! echo "$VALID_ECOSYSTEMS" | grep -qw "${{ inputs.package_ecosystem }}"; then
-            echo "::error::Invalid package_ecosystem: ${{ inputs.package_ecosystem }}"
-            echo "Valid options: $VALID_ECOSYSTEMS"
-            exit 1
-          fi
-          
-          # Validar schedule_interval
-          VALID_INTERVALS="daily weekly monthly"
-          if ! echo "$VALID_INTERVALS" | grep -qw "${{ inputs.schedule_interval }}"; then
-            echo "::error::Invalid schedule_interval: ${{ inputs.schedule_interval }}"
-            echo "Valid options: $VALID_INTERVALS"
-            exit 1
-          fi
-          
-          # Validar open_pull_requests_limit
-          if [ "${{ inputs.open_pull_requests_limit }}" -lt 1 ] || [ "${{ inputs.open_pull_requests_limit }}" -gt 10 ]; then
-            echo "::error::open_pull_requests_limit must be between 1 and 10"
-            exit 1
-          fi
-          
-          # Validar versioning_strategy
-          VALID_STRATEGIES="auto increase increase-if-necessary widen lockfile-only"
-          if ! echo "$VALID_STRATEGIES" | grep -qw "${{ inputs.versioning_strategy }}"; then
-            echo "::error::Invalid versioning_strategy: ${{ inputs.versioning_strategy }}"
-            echo "Valid options: $VALID_STRATEGIES"
-            exit 1
-          fi
-          
-          # Detectar manifest file automáticamente
-          ECOSYSTEM="${{ inputs.package_ecosystem }}"
-          DIRECTORY="${{ inputs.directory }}"
-          
-          # Normalizar directorio
-          if [ "$DIRECTORY" = "/" ]; then
-            SEARCH_DIR="."
-          else
-            SEARCH_DIR="${DIRECTORY#/}"
-          fi
-          
-          MANIFEST_FILE=""
-          case "$ECOSYSTEM" in
-            npm|yarn|pnpm)
-              MANIFEST_FILE="package.json"
-              ;;
-            pip)
-              if [ -f "$SEARCH_DIR/requirements.txt" ]; then
-                MANIFEST_FILE="requirements.txt"
-              elif [ -f "$SEARCH_DIR/setup.py" ]; then
-                MANIFEST_FILE="setup.py"
-              elif [ -f "$SEARCH_DIR/pyproject.toml" ]; then
-                MANIFEST_FILE="pyproject.toml"
-              elif [ -f "$SEARCH_DIR/Pipfile" ]; then
-                MANIFEST_FILE="Pipfile"
-              fi
-              ;;
-            pipenv)
-              MANIFEST_FILE="Pipfile"
-              ;;
-            poetry)
-              MANIFEST_FILE="pyproject.toml"
-              ;;
-            cargo)
-              MANIFEST_FILE="Cargo.toml"
-              ;;
-            bundler)
-              MANIFEST_FILE="Gemfile"
-              ;;
-            composer)
-              MANIFEST_FILE="composer.json"
-              ;;
-            maven)
-              MANIFEST_FILE="pom.xml"
-              ;;
-            gradle)
-              if [ -f "$SEARCH_DIR/build.gradle.kts" ]; then
-                MANIFEST_FILE="build.gradle.kts"
-              else
-                MANIFEST_FILE="build.gradle"
-              fi
-              ;;
-            gomod)
-              MANIFEST_FILE="go.mod"
-              ;;
-            docker)
-              MANIFEST_FILE="Dockerfile"
-              ;;
-            github-actions)
-              MANIFEST_FILE=".github/workflows"
-              ;;
-            terraform)
-              MANIFEST_FILE="*.tf"
-              ;;
-            *)
-              echo "::warning::Cannot auto-detect manifest for ecosystem: $ECOSYSTEM"
-              ;;
-          esac
-          
-          # Verificar existencia del manifest
-          MANIFEST_EXISTS="false"
-          if [ -n "$MANIFEST_FILE" ]; then
-            if [ "$MANIFEST_FILE" = ".github/workflows" ]; then
-              if [ -d ".github/workflows" ]; then
-                MANIFEST_EXISTS="true"
-              fi
-            elif [ "$MANIFEST_FILE" = "*.tf" ]; then
-              if ls $SEARCH_DIR/*.tf 1> /dev/null 2>&1; then
-                MANIFEST_EXISTS="true"
-              fi
-            else
-              FULL_PATH="$SEARCH_DIR/$MANIFEST_FILE"
-              if [ -f "$FULL_PATH" ]; then
-                MANIFEST_EXISTS="true"
-              fi
-            fi
-          fi
-          
-          echo "manifest_file=$MANIFEST_FILE" >> $GITHUB_OUTPUT
-          echo "manifest_exists=$MANIFEST_EXISTS" >> $GITHUB_OUTPUT
-          
-          if [ "$MANIFEST_EXISTS" = "false" ]; then
-            echo "::warning::Manifest file not found: $MANIFEST_FILE in $SEARCH_DIR"
-            echo "::warning::Dependabot may not work correctly without a manifest file"
-          else
-            echo "::notice::✅ Manifest file found: $MANIFEST_FILE"
-          fi
-      
-      - name: Setup Python for YAML processing
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
-      - name: Install PyYAML
+      - name: Install dependencies
         run: pip install --quiet PyYAML
       
-      - name: Update Dependabot configuration
-        id: update_config
+      - name: Generate Dependabot configuration
+        id: generate
         run: |
           python3 << 'PYTHON_SCRIPT'
           import yaml
+          import json
           import os
           import sys
           from pathlib import Path
           
-          # Inputs
-          ecosystem = "${{ inputs.package_ecosystem }}"
-          directory = "${{ inputs.directory }}"
+          # Determine if using single or multiple ecosystem mode
+          single_ecosystem = "${{ inputs.package_ecosystem }}"
+          multi_config = """${{ inputs.ecosystems_config }}"""
+          
+          # Parse configurations
+          configs = []
+          
+          if multi_config.strip():
+              # Multiple ecosystems mode
+              try:
+                  configs = json.loads(multi_config)
+                  print(f"::notice::Processing {len(configs)} ecosystem configurations")
+              except json.JSONDecodeError as e:
+                  print(f"::error::Invalid JSON in ecosystems_config: {e}")
+                  sys.exit(1)
+          elif single_ecosystem:
+              # Single ecosystem mode (legacy)
+              configs = [{
+                  'ecosystem': single_ecosystem,
+                  'directory': "${{ inputs.directory }}",
+                  'pr_limit': int("${{ inputs.open_pull_requests_limit }}"),
+                  'labels': "${{ inputs.labels }}",
+                  'commit_prefix': "${{ inputs.commit_message_prefix }}"
+              }]
+              print("::notice::Processing single ecosystem configuration (legacy mode)")
+          else:
+              print("::error::Either package_ecosystem or ecosystems_config must be provided")
+              sys.exit(1)
+          
+          # Shared settings
           schedule_interval = "${{ inputs.schedule_interval }}"
           allow_major = "${{ inputs.allow_major_versions }}" == "true"
-          pr_limit = int("${{ inputs.open_pull_requests_limit }}")
           target_branch = "${{ inputs.target_branch }}" or "${{ github.event.repository.default_branch }}"
-          labels = [l.strip() for l in "${{ inputs.labels }}".split(',') if l.strip()]
+          default_branch = "${{ github.event.repository.default_branch }}"
           reviewers = [r.strip() for r in "${{ inputs.reviewers }}".split(',') if r.strip()]
           assignees = [a.strip() for a in "${{ inputs.assignees }}".split(',') if a.strip()]
           milestone = int("${{ inputs.milestone }}")
           versioning_strategy = "${{ inputs.versioning_strategy }}"
           rebase_strategy = "${{ inputs.rebase_strategy }}"
-          commit_prefix = "${{ inputs.commit_message_prefix }}"
           
-          # Paths
-          config_path = Path('.github/dependabot.yml')
-          config_dir = Path('.github')
-          
-          # Create .github directory if needed
-          config_dir.mkdir(exist_ok=True)
-          
-          # Load or create config
-          if config_path.exists():
-              with open(config_path, 'r') as f:
-                  config = yaml.safe_load(f) or {}
-          else:
-              config = {'version': 2, 'updates': []}
-          
-          # Ensure updates list exists
-          if 'updates' not in config:
-              config['updates'] = []
-          
-          # Find existing entry
-          existing_index = -1
-          for i, update in enumerate(config['updates']):
-              if (update.get('package-ecosystem') == ecosystem and 
-                  update.get('directory') == directory):
-                  existing_index = i
-                  break
-          
-          # Build new entry
-          new_entry = {
-              'package-ecosystem': ecosystem,
-              'directory': directory,
-              'schedule': {'interval': schedule_interval},
-              'open-pull-requests-limit': pr_limit
+          # Initialize config structure
+          dependabot_config = {
+              'version': 2,
+              'updates': []
           }
           
-          # Add optional fields
-          default_branch = "${{ github.event.repository.default_branch }}"
-          if target_branch and target_branch != default_branch:
-              new_entry['target-branch'] = target_branch
+          # Process each ecosystem
+          for config in configs:
+              ecosystem = config.get('ecosystem')
+              directory = config.get('directory', '/')
+              pr_limit = config.get('pr_limit', int("${{ inputs.open_pull_requests_limit }}"))
+              
+              # Parse labels (can be string or list)
+              labels_input = config.get('labels', "${{ inputs.labels }}")
+              if isinstance(labels_input, str):
+                  labels = [l.strip() for l in labels_input.split(',') if l.strip()]
+              else:
+                  labels = labels_input
+              
+              commit_prefix = config.get('commit_prefix', "${{ inputs.commit_message_prefix }}")
+              
+              # Build update entry
+              update_entry = {
+                  'package-ecosystem': ecosystem,
+                  'directory': directory,
+                  'schedule': {'interval': schedule_interval},
+                  'open-pull-requests-limit': pr_limit
+              }
+              
+              # Add optional fields
+              if target_branch and target_branch != default_branch:
+                  update_entry['target-branch'] = target_branch
+              
+              if labels:
+                  update_entry['labels'] = labels
+              
+              if reviewers:
+                  update_entry['reviewers'] = reviewers
+              
+              if assignees:
+                  update_entry['assignees'] = assignees
+              
+              if milestone > 0:
+                  update_entry['milestone'] = milestone
+              
+              if versioning_strategy != 'auto':
+                  update_entry['versioning-strategy'] = versioning_strategy
+              
+              if rebase_strategy != 'auto':
+                  update_entry['rebase-strategy'] = rebase_strategy
+              
+              # Add commit message configuration
+              update_entry['commit-message'] = {'prefix': commit_prefix}
+              
+              # Add ignore rules for major versions
+              if not allow_major:
+                  update_entry['ignore'] = [
+                      {
+                          'dependency-name': '*',
+                          'update-types': ['version-update:semver-major']
+                      }
+                  ]
+              
+              dependabot_config['updates'].append(update_entry)
+              print(f"::notice::✅ Added configuration for {ecosystem} in {directory}")
           
-          if labels:
-              new_entry['labels'] = labels
+          # Write configuration
+          config_path = Path('.github/dependabot.yml')
+          config_dir = Path('.github')
+          config_dir.mkdir(exist_ok=True)
           
-          if reviewers:
-              new_entry['reviewers'] = reviewers
-          
-          if assignees:
-              new_entry['assignees'] = assignees
-          
-          if milestone > 0:
-              new_entry['milestone'] = milestone
-          
-          if versioning_strategy != 'auto':
-              new_entry['versioning-strategy'] = versioning_strategy
-          
-          if rebase_strategy != 'auto':
-              new_entry['rebase-strategy'] = rebase_strategy
-          
-          # Add commit message configuration
-          new_entry['commit-message'] = {'prefix': commit_prefix}
-          
-          # Add ignore rules for major versions
-          if not allow_major:
-              new_entry['ignore'] = [
-                  {
-                      'dependency-name': '*',
-                      'update-types': ['version-update:semver-major']
-                  }
-              ]
-          
-          # Update or add entry
-          if existing_index >= 0:
-              config['updates'][existing_index] = new_entry
-              print(f"::notice::Updated existing configuration for {ecosystem} in {directory}")
-          else:
-              config['updates'].append(new_entry)
-              print(f"::notice::Added new configuration for {ecosystem} in {directory}")
-          
-          # Write config with proper YAML formatting
           class CustomDumper(yaml.SafeDumper):
               def increase_indent(self, flow=False, indentless=False):
                   return super(CustomDumper, self).increase_indent(flow, False)
           
           with open(config_path, 'w') as f:
-              yaml.dump(config, f, 
+              yaml.dump(dependabot_config, f, 
                        Dumper=CustomDumper,
                        default_flow_style=False,
                        sort_keys=False,
                        width=1000,
                        allow_unicode=True)
           
-          # Set outputs
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"updated=true\n")
-              f.write(f"file_path={config_path}\n")
+          print(f"::notice::📝 Configuration written to {config_path}")
+          print("\n📋 Generated configuration:")
+          print(yaml.dump(dependabot_config, default_flow_style=False, sort_keys=False))
           
-          print(f"::notice::✅ Configuration written to {config_path}")
+          # Set output
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"config_path={config_path}\n")
+              f.write(f"ecosystems_count={len(configs)}\n")
           PYTHON_SCRIPT
       
       - name: Validate generated YAML
@@ -374,132 +255,47 @@ jobs:
               with open(config_path, 'r') as f:
                   config = yaml.safe_load(f)
               
-              # Validate structure
               assert config.get('version') == 2, "Invalid version"
               assert isinstance(config.get('updates'), list), "Updates must be a list"
-              assert len(config['updates']) > 0, "At least one update configuration required"
+              assert len(config['updates']) > 0, "At least one update required"
               
-              # Validate each update entry
               for update in config['updates']:
-                  assert 'package-ecosystem' in update, "Missing package-ecosystem"
-                  assert 'directory' in update, "Missing directory"
-                  assert 'schedule' in update, "Missing schedule"
-                  assert 'interval' in update['schedule'], "Missing schedule interval"
+                  assert 'package-ecosystem' in update
+                  assert 'directory' in update
+                  assert 'schedule' in update
+                  assert 'interval' in update['schedule']
               
               print("::notice::✅ YAML validation passed")
-              
-              # Pretty print config
-              print("\n📋 Generated configuration:")
-              print(yaml.dump(config, default_flow_style=False, sort_keys=False))
-              
           except Exception as e:
               print(f"::error::YAML validation failed: {e}")
               exit(1)
           PYTHON_SCRIPT
       
       - name: Commit and push changes
-        id: commit
-        continue-on-error: true
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: |
-            ${{ inputs.commit_message_prefix }}: configure Dependabot for ${{ inputs.package_ecosystem }} in ${{ inputs.directory }}
+            ${{ inputs.commit_message_prefix }}: configure Dependabot for ${{ steps.generate.outputs.ecosystems_count }} ecosystem(s)
             
-            - Package ecosystem: ${{ inputs.package_ecosystem }}
-            - Directory: ${{ inputs.directory }}
-            - Schedule: ${{ inputs.schedule_interval }}
-            - Allow major versions: ${{ inputs.allow_major_versions }}
+            This commit configures Dependabot for multiple package ecosystems.
             
             [skip ci]
           file_pattern: '.github/dependabot.yml'
           commit_user_name: 'github-actions[bot]'
           commit_user_email: 'github-actions[bot]@users.noreply.github.com'
-          commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
           branch: ${{ inputs.target_branch || github.event.repository.default_branch }}
-          push_options: '--force-with-lease'
-      
-      - name: Retry commit on conflict
-        if: steps.commit.outcome == 'failure'
-        run: |
-          set -euo pipefail
-          
-          echo "::notice::Retrying commit after conflict..."
-          
-          MAX_RETRIES=3
-          RETRY_COUNT=0
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "::notice::Retry attempt $RETRY_COUNT of $MAX_RETRIES"
-            
-            # Pull latest changes with rebase
-            if git pull --rebase origin ${{ inputs.target_branch || github.event.repository.default_branch }}; then
-              # Re-add our changes
-              git add .github/dependabot.yml
-              
-              # Commit
-              if git commit -m "${{ inputs.commit_message_prefix }}: configure Dependabot for ${{ inputs.package_ecosystem }} in ${{ inputs.directory }}
-
-            - Package ecosystem: ${{ inputs.package_ecosystem }}
-            - Directory: ${{ inputs.directory }}
-            - Schedule: ${{ inputs.schedule_interval }}
-            
-            [skip ci]"; then
-                # Push
-                if git push; then
-                  echo "::notice::✅ Successfully committed after retry $RETRY_COUNT"
-                  exit 0
-                fi
-              fi
-            fi
-            
-            # Wait before retry with exponential backoff
-            WAIT_TIME=$((2 ** RETRY_COUNT))
-            echo "::notice::Waiting ${WAIT_TIME}s before next retry..."
-            sleep $WAIT_TIME
-          done
-          
-          echo "::error::Failed to commit after $MAX_RETRIES retries"
-          exit 1
       
       - name: Generate summary
         if: always()
         run: |
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          ## 🤖 Dependabot Configuration Summary
+          ## 🤖 Dependabot Configuration
           
-          ### Configuration Details
+          ✅ Successfully configured **${{ steps.generate.outputs.ecosystems_count }}** ecosystem(s)
           
-          | Setting | Value |
-          |---------|-------|
-          | **Repository** | `${{ github.repository }}` |
-          | **Ecosystem** | `${{ inputs.package_ecosystem }}` |
-          | **Directory** | `${{ inputs.directory }}` |
-          | **Schedule** | `${{ inputs.schedule_interval }}` |
-          | **Target Branch** | `${{ inputs.target_branch || github.event.repository.default_branch }}` |
-          | **PR Limit** | `${{ inputs.open_pull_requests_limit }}` |
-          | **Allow Major Versions** | `${{ inputs.allow_major_versions }}` |
-          | **Versioning Strategy** | `${{ inputs.versioning_strategy }}` |
-          | **Commit Prefix** | `${{ inputs.commit_message_prefix }}` |
-          | **Manifest File** | `${{ steps.validate.outputs.manifest_file }}` |
-          | **Manifest Found** | `${{ steps.validate.outputs.manifest_exists == 'true' && '✅' || '⚠️ Not found' }}` |
-          | **Labels** | `${{ inputs.labels }}` |
-          | **Reviewers** | `${{ inputs.reviewers || 'None' }}` |
-          | **Assignees** | `${{ inputs.assignees || 'None' }}` |
-          | **Milestone** | `${{ inputs.milestone > 0 && inputs.milestone || 'None' }}` |
+          ### 📍 Next Steps
           
-          ### Status
-          
-          ${{ steps.update_config.outputs.updated == 'true' && '✅' || '❌' }} Configuration ${{ steps.commit.outcome == 'success' && 'successfully committed' || 'update attempted' }}
-          
-          ### Next Steps
-          
-          1. 🔍 **Monitor**: [Dependabot Insights](https://github.com/${{ github.repository }}/network/updates)
-          2. 📬 **Review PRs**: [Dependabot Pull Requests](https://github.com/${{ github.repository }}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot)
-          3. 🔐 **Security**: [Security Advisories](https://github.com/${{ github.repository }}/security/dependabot)
-          4. ⚙️ **Config File**: [dependabot.yml](https://github.com/${{ github.repository }}/blob/${{ inputs.target_branch || github.event.repository.default_branch }}/.github/dependabot.yml)
-          
-          ---
-          
-          💡 **Tip**: Dependabot will automatically create PRs based on the schedule. You can also trigger manual scans from the Dependency graph page.
+          1. [View Configuration](https://github.com/${{ github.repository }}/blob/${{ inputs.target_branch || github.event.repository.default_branch }}/.github/dependabot.yml)
+          2. [Monitor Updates](https://github.com/${{ github.repository }}/network/updates)
+          3. [Review PRs](https://github.com/${{ github.repository }}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot)
           EOF
