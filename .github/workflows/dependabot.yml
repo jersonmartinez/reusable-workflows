@@ -102,6 +102,14 @@ jobs:
 
           python3 /tmp/validate_labels.py
 
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: 📦 Install PyYAML
+        run: pip install pyyaml
+
       - name: 📝 Generate Dependabot Config
         run: |
           cat > /tmp/generate_config.py << 'SCRIPT_EOF'
@@ -142,10 +150,18 @@ jobs:
 
           import yaml
           os.makedirs('.github', exist_ok=True)
+          
+          # Generar YAML con indentación correcta
           with open('.github/dependabot.yml', 'w') as f:
-              yaml.dump(config, f, sort_keys=False, default_flow_style=False)
+              yaml.dump(config, f, sort_keys=False, default_flow_style=False, indent=2)
 
           print("✅ Configuración generada exitosamente")
+          
+          # Verificar el archivo generado
+          with open('.github/dependabot.yml', 'r') as f:
+              content = f.read()
+              print("\n📄 Contenido generado:")
+              print(content)
           SCRIPT_EOF
 
           python3 /tmp/generate_config.py
@@ -175,7 +191,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sleep 5
-          
+
           prs=$(gh pr list \
             --repo ${{ github.repository }} \
             --author "app/dependabot" \
@@ -191,6 +207,7 @@ jobs:
           echo "prs_count=$count" >> $GITHUB_OUTPUT
 
       - name: 📊 Generate Summary
+        if: always()
         env:
           VALIDATION_DATA: ${{ steps.validate_labels.outputs }}
           COMMIT_STATUS: ${{ steps.commit.outputs.status }}
@@ -204,7 +221,7 @@ jobs:
 
           repo = os.getenv('GITHUB_REPOSITORY')
           run_id = os.getenv('GITHUB_RUN_ID')
-          
+
           # Cargar datos de validación
           try:
               with open('/tmp/validation_data.json', 'r') as f:
@@ -230,10 +247,10 @@ jobs:
 
           # Generar summary
           summary = []
-          
+
           # Header
           summary.append("# 🤖 Configuración de Dependabot\n\n")
-          
+
           # Estado del commit
           if commit_status == 'updated':
               summary.append(f"✅ **Configuración actualizada** • Commit: `{commit_sha[:7]}`\n\n")
@@ -300,14 +317,14 @@ jobs:
               summary.append(f"## 🔄 Pull Requests de Dependabot ({prs_count})\n\n")
               summary.append("<table>\n")
               summary.append("<tr><th>#</th><th>Título</th><th>Labels</th><th>Creado</th></tr>\n")
-              
+
               for pr in prs_data[:10]:
                   pr_number = pr['number']
                   pr_title = pr['title']
                   pr_labels = ', '.join([f"`{l['name']}`" for l in pr['labels'][:3]])
                   pr_date = pr['createdAt'][:10]
                   pr_link = f"https://github.com/{repo}/pull/{pr_number}"
-                  
+
                   summary.append("<tr>\n")
                   summary.append(f"<td><a href='{pr_link}'>#{pr_number}</a></td>\n")
                   summary.append(f"<td>{pr_title}</td>\n")
@@ -316,7 +333,7 @@ jobs:
                   summary.append("</tr>\n")
 
               summary.append("</table>\n\n")
-              
+
               if prs_count > 10:
                   summary.append(f"> Ver todos los PRs en [Pull Requests](https://github.com/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot)\n\n")
           else:
@@ -328,7 +345,7 @@ jobs:
           # Información del Workflow
           summary.append("<details>\n")
           summary.append("<summary><b>📚 Sobre el Workflow Reusable</b></summary>\n\n")
-          
+
           summary.append("### ✅ Características Implementadas\n\n")
           summary.append("<table>\n")
           summary.append("<tr><th>Característica</th><th>Descripción</th></tr>\n")
