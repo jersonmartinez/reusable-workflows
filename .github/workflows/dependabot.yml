@@ -151,13 +151,13 @@ jobs:
 
           import yaml
           os.makedirs('.github', exist_ok=True)
-          
+
           # Generar YAML con indentación correcta
           with open('.github/dependabot.yml', 'w') as f:
               yaml.dump(config, f, sort_keys=False, default_flow_style=False, indent=2)
 
           print("✅ Configuración generada exitosamente")
-          
+
           # Verificar el archivo generado
           with open('.github/dependabot.yml', 'r') as f:
               content = f.read()
@@ -191,21 +191,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sleep 5
+          # Esperar un momento para que GitHub sincronice
+          sleep 3
 
-          prs=$(gh pr list \
+          # Obtener PRs de Dependabot
+          prs_json=$(gh pr list \
             --repo ${{ github.repository }} \
             --author "app/dependabot" \
             --state open \
-            --json number,title,createdAt,labels \
-            --limit 20)
+            --json number,title,createdAt,labels,updatedAt \
+            --limit 50 2>/dev/null || echo '[]')
 
           echo "prs_data<<EOF" >> $GITHUB_OUTPUT
-          echo "$prs" >> $GITHUB_OUTPUT
+          echo "$prs_json" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          count=$(echo "$prs" | jq '. | length')
-          echo "prs_count=$count" >> $GITHUB_OUTPUT
+          prs_count=$(echo "$prs_json" | jq '. | length' 2>/dev/null || echo "0")
+          echo "prs_count=$prs_count" >> $GITHUB_OUTPUT
+
+          echo "::notice::Se encontraron $prs_count PRs de Dependabot"
 
       - name: 📊 Generate Summary
         if: always()
@@ -216,12 +220,16 @@ jobs:
           COMMIT_SHA: ${{ steps.commit.outputs.sha }}
           PRS_DATA: ${{ steps.check_prs.outputs.prs_data }}
           PRS_COUNT: ${{ steps.check_prs.outputs.prs_count }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
           import json, os, sys
           from datetime import datetime
 
           repo = os.getenv('GITHUB_REPOSITORY')
+          server_url = os.getenv('GITHUB_SERVER_URL', 'https://github.com')
           run_id = os.getenv('GITHUB_RUN_ID')
           default_pr_limit = os.getenv('DEFAULT_PR_LIMIT', '5')
 
@@ -241,8 +249,10 @@ jobs:
           # Parsear PRs
           prs_count = int(os.getenv('PRS_COUNT', '0'))
           try:
-              prs_data = json.loads(os.getenv('PRS_DATA', '[]'))
-          except:
+              prs_raw = os.getenv('PRS_DATA', '[]')
+              prs_data = json.loads(prs_raw) if prs_raw and prs_raw.strip() != '' else []
+          except Exception as e:
+              print(f"::debug::Error parseando PRs: {e}")
               prs_data = []
 
           commit_status = os.getenv('COMMIT_STATUS', 'unknown')
@@ -254,11 +264,27 @@ jobs:
           # Header
           summary.append("# 🤖 Configuración de Dependabot\n\n")
 
-          # Estado del commit
+          # Estado del commit con enlace
           if commit_status == 'updated':
-              summary.append(f"✅ **Configuración actualizada** • Commit: `{commit_sha[:7]}`\n\n")
+              commit_url = f"{server_url}/{repo}/commit/{commit_sha}"
+              summary.append(f"✅ **Configuración actualizada** • Commit: [📝 `{commit_sha[:7]}`]({commit_url})\n\n")
           else:
               summary.append("ℹ️ **Sin cambios** • La configuración está actualizada\n\n")
+
+          # Resumen rápido en tabla
+          summary.append("### 📊 Resumen\n\n")
+          summary.append("<table>\n")
+          summary.append("<tr><th>Métrica</th><th>Valor</th></tr>\n")
+          summary.append(f"<tr><td>🔧 Ecosistemas configurados</td><td><b>{len(ecosystems)}</b></td></tr>\n")
+          
+          total_labels = sum(len(v) for v in validation['valid_by_ecosystem'].values())
+          summary.append(f"<tr><td>🏷️ Labels validados</td><td><b>{total_labels}</b></td></tr>\n")
+          
+          missing_count = sum(len(v) for v in validation['missing_by_ecosystem'].values())
+          summary.append(f"<tr><td>⚠️ Labels faltantes</td><td><b>{missing_count}</b></td></tr>\n")
+          
+          summary.append(f"<tr><td>🔄 PRs activos</td><td><b>{prs_count}</b></td></tr>\n")
+          summary.append("</table>\n\n")
 
           summary.append("---\n\n")
 
@@ -285,8 +311,8 @@ jobs:
               for label in valid_labels:
                   label_data = existing_labels.get(label.lower(), {})
                   color = label_data.get('color', '0366d6')
-                  badge = f'<img src="https://img.shields.io/badge/-{label}-{color}" alt="{label}"/>'
-                  link = f'https://github.com/{repo}/labels/{label.replace(" ", "%20")}'
+                  badge = f'<img src="https://img.shields.io/badge/-{label.replace("-", "--")}-{color}" alt="{label}"/>'
+                  link = f'{server_url}/{repo}/labels/{label.replace(" ", "%20")}'
                   valid_badges.append(f'<a href="{link}">{badge}</a>')
 
               # Labels faltantes
@@ -313,7 +339,7 @@ jobs:
 
           if all_missing:
               summary.append("> ⚠️ **Acción Recomendada:** Algunos labels no existen en el repositorio. ")
-              summary.append(f"[**Crear labels faltantes**](https://github.com/{repo}/labels/new) ")
+              summary.append(f"[**🏷️ Crear labels faltantes**]({server_url}/{repo}/labels/new) ")
               summary.append("o ajustar la configuración en el caller.\n\n")
 
           summary.append("---\n\n")
@@ -322,14 +348,14 @@ jobs:
           if prs_count > 0:
               summary.append(f"## 🔄 Pull Requests de Dependabot ({prs_count})\n\n")
               summary.append("<table>\n")
-              summary.append("<tr><th>#</th><th>Título</th><th>Labels</th><th>Creado</th></tr>\n")
+              summary.append("<tr><th>#</th><th>Título</th><th>Labels</th><th>Actualizado</th></tr>\n")
 
-              for pr in prs_data[:10]:
+              for pr in prs_data[:15]:
                   pr_number = pr['number']
                   pr_title = pr['title']
-                  pr_labels = ', '.join([f"`{l['name']}`" for l in pr['labels'][:3]])
-                  pr_date = pr['createdAt'][:10]
-                  pr_link = f"https://github.com/{repo}/pull/{pr_number}"
+                  pr_labels = ', '.join([f"`{l['name']}`" for l in pr.get('labels', [])[:3]])
+                  pr_date = pr.get('updatedAt', pr.get('createdAt', 'N/A'))[:10]
+                  pr_link = f"{server_url}/{repo}/pull/{pr_number}"
 
                   summary.append("<tr>\n")
                   summary.append(f"<td><a href='{pr_link}'>#{pr_number}</a></td>\n")
@@ -340,11 +366,39 @@ jobs:
 
               summary.append("</table>\n\n")
 
-              if prs_count > 10:
-                  summary.append(f"> Ver todos los PRs en [Pull Requests](https://github.com/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot)\n\n")
+              if prs_count > 15:
+                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot"
+                  summary.append(f"> 📋 Ver todos los PRs en [**Pull Requests**]({prs_url})\n\n")
           else:
               summary.append("## 🔄 Pull Requests de Dependabot\n\n")
               summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
+
+          summary.append("---\n\n")
+
+          # Enlaces útiles
+          summary.append("## 🔗 Enlaces Útiles\n\n")
+          summary.append("<table>\n")
+          summary.append("<tr><th>Recurso</th><th>Descripción</th></tr>\n")
+          
+          config_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
+          summary.append(f"<tr><td>📝 [Configuración]({config_url})</td><td>Ver archivo dependabot.yml generado</td></tr>\n")
+          
+          security_url = f"{server_url}/{repo}/settings/security_analysis"
+          summary.append(f"<tr><td>🛡️ [Security Settings]({security_url})</td><td>Configurar análisis de seguridad</td></tr>\n")
+          
+          insights_url = f"{server_url}/{repo}/network/dependencies"
+          summary.append(f"<tr><td>📊 [Dependency Graph]({insights_url})</td><td>Visualizar dependencias del proyecto</td></tr>\n")
+          
+          labels_url = f"{server_url}/{repo}/labels"
+          summary.append(f"<tr><td>🏷️ [Gestionar Labels]({labels_url})</td><td>Crear o editar labels del repositorio</td></tr>\n")
+          
+          prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
+          summary.append(f"<tr><td>🔄 [PRs de Dependabot]({prs_url})</td><td>Ver todos los Pull Requests activos</td></tr>\n")
+          
+          advisories_url = f"{server_url}/{repo}/security/dependabot"
+          summary.append(f"<tr><td>🚨 [Security Alerts]({advisories_url})</td><td>Revisar alertas de seguridad</td></tr>\n")
+          
+          summary.append("</table>\n\n")
 
           summary.append("---\n\n")
 
@@ -358,7 +412,7 @@ jobs:
           summary.append("<tr><td>🔍 Validación automática de labels</td><td>Detecta labels faltantes antes de generar configuración</td></tr>\n")
           summary.append("<tr><td>📊 Summary con diseño consolidado</td><td>Tabla única con toda la información por ecosistema</td></tr>\n")
           summary.append("<tr><td>🏷️ Badges con colores reales</td><td>Muestra los labels con sus colores del repositorio</td></tr>\n")
-          summary.append("<tr><td>🔗 Enlaces directos</td><td>A PRs, labels y configuración de Dependabot</td></tr>\n")
+          summary.append("<tr><td>🔗 Enlaces directos</td><td>A PRs, labels, configuración y security</td></tr>\n")
           summary.append("<tr><td>🔄 Detección de PRs existentes</td><td>Lista PRs activos de Dependabot con metadata</td></tr>\n")
           summary.append("<tr><td>📝 Configuración personalizable</td><td>Prefijos, límites de PRs, schedules por ecosistema</td></tr>\n")
           summary.append("<tr><td>🎯 Rama objetivo configurable</td><td>Permite dirigir PRs a branches específicas</td></tr>\n")
@@ -367,27 +421,25 @@ jobs:
           summary.append("### 🔮 Mejoras Futuras Sugeridas\n\n")
           summary.append("- 🔔 Notificaciones Slack/Discord cuando se crean PRs\n")
           summary.append("- 📈 Matriz de compatibilidad entre versiones\n")
-          summary.append("- 🛡️ Integración con GitHub Security Advisories\n")
+          summary.append("- 🛡️ Integración automática con Security Advisories\n")
           summary.append("- 📊 Dashboard centralizado para múltiples repositorios\n")
-          summary.append("- 🔍 Análisis de impacto de actualizaciones\n\n")
-
-          summary.append("### ⚙️ Configuración Recomendada\n\n")
-          summary.append(f"1. **Habilitar Dependabot:** [Settings > Security](https://github.com/{repo}/settings/security_analysis)\n")
-          summary.append(f"2. **Revisar labels:** [Gestionar labels](https://github.com/{repo}/labels)\n")
-          summary.append(f"3. **Branch protection:** [Configurar reglas](https://github.com/{repo}/settings/branches)\n\n")
+          summary.append("- 🔍 Análisis predictivo de impacto de actualizaciones\n\n")
 
           summary.append("</details>\n\n")
 
           # Footer
           timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+          workflow_url = f"{server_url}/jersonmartinez/reusable-workflows"
           summary.append("---\n\n")
-          summary.append(f"<sub>🤖 Generado por [Reusable Workflows](https://github.com/jersonmartinez/reusable-workflows) • {timestamp}</sub>\n")
+          summary.append(f"<sub>🤖 Generado por [**Reusable Workflows**]({workflow_url}) • {timestamp}</sub>\n")
 
           # Escribir summary
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'w') as f:
               f.write(''.join(summary))
 
           print("✅ Summary generado correctamente")
+          print(f"📊 PRs detectados: {prs_count}")
+          print(f"📦 Ecosistemas: {len(ecosystems)}")
           SCRIPT_EOF
 
           python3 /tmp/generate_summary.py
