@@ -37,7 +37,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > /tmp/validate_labels.py << 'SCRIPT_EOF'
-          import json, os, subprocess, sys
+          import json, os, subprocess, sys, random, string
           from collections import defaultdict
 
           # Obtener labels existentes del repositorio
@@ -83,56 +83,56 @@ jobs:
                       invalid_labels.append(label)
                       all_missing_labels.add(label)
 
-              # Actualizar ecosistema con labels válidos
-              if valid_labels:
-                  eco['labels'] = valid_labels
-              else:
-                  eco.pop('labels', None)
-                  ecosystems_without_labels.append(f"{eco['ecosystem']} ({eco.get('directory', '/')})")
-
               validation_results.append({
                   'ecosystem': eco['ecosystem'],
                   'directory': eco.get('directory', '/'),
-                  'requested': len(requested_labels),
-                  'valid': len(valid_labels),
-                  'invalid': len(invalid_labels),
+                  'requested_labels': requested_labels,
                   'valid_labels': valid_labels,
-                  'invalid_labels': invalid_labels
+                  'invalid_labels': invalid_labels,
+                  'valid_labels_count': len(valid_labels),
+                  'invalid_labels_count': len(invalid_labels),
+                  'all_valid': len(invalid_labels) == 0
               })
 
-          # Warnings consolidados
-          if ecosystems_without_labels:
-              print(f"::warning title=Ecosistemas Sin Labels::⚠️ {len(ecosystems_without_labels)} ecosistema(s) sin labels válidos: {', '.join(ecosystems_without_labels)}")
+              if invalid_labels:
+                  print(f"::warning title={eco['ecosystem']} ({eco.get('directory', '/')})::Labels faltantes: {', '.join(invalid_labels)}")
 
-          if all_missing_labels:
-              print(f"::warning title=Labels Faltantes::🏷️ {len(all_missing_labels)} label(s) no existen: {', '.join(sorted(all_missing_labels))}")
+          # Generar ecosistemas sin labels inválidos
+          validated_ecosystems = []
+          for eco in ecosystems:
+              eco_copy = eco.copy()
+              
+              if 'labels' in eco_copy and eco_copy['labels']:
+                  requested_labels = [l.strip() for l in eco_copy['labels'].split(',')]
+                  valid_labels = [l for l in requested_labels if l.lower() in existing_labels]
+                  
+                  if valid_labels:
+                      eco_copy['labels'] = valid_labels
+                  else:
+                      ecosystems_without_labels.append(f"{eco['ecosystem']} ({eco.get('directory', '/')})")
+                      del eco_copy['labels']
+              
+              validated_ecosystems.append(eco_copy)
 
-          # Notice de validación exitosa
-          valid_count = sum(1 for v in validation_results if v['valid'] > 0)
-          print(f"::notice title=Validación Exitosa::✅ {valid_count} de {len(validation_results)} ecosistemas tienen labels válidos")
-
-          # ============================================
-          # OUTPUTS (Usar delimitadores EOF para multilínea)
-          # ============================================
-          
-          import random, string
+          # Outputs con delimitadores seguros
           delimiter = ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
           
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              # Ecosistemas validados (con labels corregidos)
               f.write(f"validated_ecosystems<<{delimiter}\n")
-              f.write(json.dumps(ecosystems, indent=2))
+              f.write(json.dumps(validated_ecosystems, indent=2))
               f.write(f"\n{delimiter}\n")
               
-              # Resultados de validación
               f.write(f"validation_results<<{delimiter}\n")
               f.write(json.dumps(validation_results, indent=2))
               f.write(f"\n{delimiter}\n")
               
-              # Labels faltantes
               f.write(f"missing_labels={','.join(sorted(all_missing_labels))}\n")
               f.write(f"has_missing_labels={'true' if all_missing_labels else 'false'}\n")
-              f.write(f"validation_status={'success' if all([v['valid_labels'] for v in validation_results]) else 'partial'}\n")
+              f.write(f"validation_status={'success' if all([v['all_valid'] for v in validation_results]) else 'partial'}\n")
+              f.write(f"ecosystems_without_labels={','.join(ecosystems_without_labels)}\n")
+
+          if ecosystems_without_labels:
+              print(f"::warning title=Ecosistemas sin Labels::Los siguientes ecosistemas no tendrán labels: {', '.join(ecosystems_without_labels)}")
 
           print("✅ Validación completada")
           SCRIPT_EOF
@@ -147,11 +147,10 @@ jobs:
           DEFAULT_PR_LIMIT: ${{ inputs.pr_limit }}
         run: |
           cat > /tmp/generate_config.py << 'SCRIPT_EOF'
-          import yaml, json, sys, os
+          import yaml, json, sys, os, random, string
           from pathlib import Path
           from datetime import datetime
 
-          # ✅ Leer desde variable de entorno (más seguro para datos grandes)
           validated_json = os.getenv('VALIDATED_ECOSYSTEMS', '[]')
           schedule = os.getenv('SCHEDULE_INTERVAL', 'weekly')
           default_pr_limit = int(os.getenv('DEFAULT_PR_LIMIT', '5'))
@@ -160,71 +159,60 @@ jobs:
               ecosystems = json.loads(validated_json)
           except json.JSONDecodeError as e:
               print(f"::error title=JSON Inválido::Error al parsear ecosistemas: {e}")
-              print(f"::debug::JSON recibido (primeros 500 chars): {validated_json[:500]}")
               sys.exit(1)
 
           if not ecosystems:
               print(f"::error title=Sin Ecosistemas::No hay ecosistemas para configurar")
               sys.exit(1)
 
-          # Debug
           print(f"::debug::Procesando {len(ecosystems)} ecosistemas")
-          for eco in ecosystems:
-              print(f"::debug::- {eco['ecosystem']} en {eco.get('directory', '/')}")
 
-          # Generar configuración Dependabot
-          config = {
-              'version': 2,
-              'updates': []
-          }
-
+          updates = []
           for eco in ecosystems:
-              entry = {
+              config = {
                   'package-ecosystem': eco['ecosystem'],
                   'directory': eco.get('directory', '/'),
-                  'schedule': {'interval': schedule},
-                  'open-pull-requests-limit': eco.get('pr_limit', default_pr_limit)
+                  'schedule': {'interval': eco.get('schedule', schedule)}
               }
 
-              # Agregar labels si existen (ya validados)
               if 'labels' in eco and eco['labels']:
-                  # Puede venir como string "label1,label2" o como lista
-                  if isinstance(eco['labels'], str):
-                      labels_list = [l.strip() for l in eco['labels'].split(',') if l.strip()]
-                  else:
-                      labels_list = eco['labels']
-                  
-                  if labels_list:
-                      entry['labels'] = labels_list
+                  labels = eco['labels'] if isinstance(eco['labels'], list) else [l.strip() for l in eco['labels'].split(',')]
+                  if labels:
+                      config['labels'] = labels
+                      print(f"::debug::✓ {eco['ecosystem']} ({config['directory']}): {len(labels)} labels")
 
-              # Agregar commit-message prefix si existe
-              if 'prefix' in eco and eco['prefix']:
-                  entry['commit-message'] = {'prefix': eco['prefix']}
+              if 'pr_limit' in eco:
+                  config['open-pull-requests-limit'] = eco['pr_limit']
+              else:
+                  config['open-pull-requests-limit'] = default_pr_limit
 
-              config['updates'].append(entry)
-              print(f"::debug::✓ Configurado: {eco['ecosystem']} ({eco.get('directory', '/')})")
+              if 'prefix' in eco:
+                  config['commit-message'] = {'prefix': eco['prefix']}
 
-          # Guardar archivo
-          try:
-              Path('.github').mkdir(exist_ok=True)
-              with open('.github/dependabot.yml', 'w') as f:
-                  yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-              
-              print(f"::notice title=Configuración Generada::✅ {len(config['updates'])} ecosistemas configurados en dependabot.yml")
-          except Exception as e:
-              print(f"::error title=Error Escritura::No se pudo guardar dependabot.yml: {e}")
-              sys.exit(1)
+              updates.append(config)
+              print(f"::debug::✓ Configurado: {eco['ecosystem']} ({config['directory']})")
+
+          dependabot_config = {
+              'version': 2,
+              'updates': updates
+          }
+
+          Path('.github').mkdir(exist_ok=True)
+          config_path = Path('.github/dependabot.yml')
+          
+          with open(config_path, 'w') as f:
+              yaml.dump(dependabot_config, f, sort_keys=False, default_flow_style=False, allow_unicode=True)
+
+          print(f"✅ Configuración generada: {config_path}")
+          print(f"::notice title=Archivo Generado::📝 {config_path} ({len(updates)} ecosistemas)")
 
           # Outputs
-          timestamp = datetime.utcnow().isoformat() + 'Z'
-          
+          delimiter = ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"ecosystems_count={len(config['updates'])}\n")
+              f.write(f"config_path={config_path}\n")
+              f.write(f"ecosystems_count={len(updates)}\n")
               f.write(f"schedule={schedule}\n")
-              f.write(f"timestamp={timestamp}\n")
-              f.write(f"config_file=.github/dependabot.yml\n")
-
-          print(f"✅ Archivo generado: .github/dependabot.yml ({len(config['updates'])} ecosistemas)")
+              f.write(f"timestamp={datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
           SCRIPT_EOF
 
           python3 /tmp/generate_config.py
@@ -232,99 +220,212 @@ jobs:
       - name: Commit Changes
         id: commit
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
           if git diff --quiet .github/dependabot.yml; then
             echo "changes_detected=false" >> $GITHUB_OUTPUT
-            echo "::notice title=Sin Cambios::📋 El archivo dependabot.yml ya está actualizado"
+            echo "commit_hash=N/A" >> $GITHUB_OUTPUT
+            echo "commit_status=sin-cambios" >> $GITHUB_OUTPUT
+            echo "::notice title=Sin Cambios::✅ La configuración ya está actualizada"
           else
             git add .github/dependabot.yml
-            git commit -m "chore(deps): update dependabot config
+            git commit -m "chore(deps): update dependabot configuration
 
-          - Schedule: ${{ inputs.schedule }}
-          - Ecosystems: ${{ steps.generate.outputs.ecosystems_count }}
-          - Generated: ${{ steps.generate.outputs.timestamp }}
-
-          [skip ci]"
+            - Updated by workflow: ${{ github.workflow }}
+            - Run ID: ${{ github.run_id }}
+            - Timestamp: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            
             git push
             
-            commit_sha=$(git rev-parse HEAD)
+            COMMIT_SHA=$(git rev-parse HEAD)
             echo "changes_detected=true" >> $GITHUB_OUTPUT
-            echo "commit_hash=$commit_sha" >> $GITHUB_OUTPUT
-            echo "::notice title=Cambios Confirmados::✅ Configuración actualizada en commit ${commit_sha:0:7}"
+            echo "commit_hash=$COMMIT_SHA" >> $GITHUB_OUTPUT
+            echo "commit_status=actualizado" >> $GITHUB_OUTPUT
+            echo "::notice title=Commit Realizado::✅ Configuración actualizada (${COMMIT_SHA:0:7})"
           fi
 
       - name: Generate Summary
         if: always()
+        env:
+          VALIDATION_RESULTS: ${{ steps.validate_labels.outputs.validation_results }}
+          MISSING_LABELS: ${{ steps.validate_labels.outputs.missing_labels }}
+          HAS_MISSING_LABELS: ${{ steps.validate_labels.outputs.has_missing_labels }}
+          ECOSYSTEMS_COUNT: ${{ steps.generate.outputs.ecosystems_count }}
+          SCHEDULE: ${{ steps.generate.outputs.schedule }}
+          TIMESTAMP: ${{ steps.generate.outputs.timestamp }}
+          COMMIT_STATUS: ${{ steps.commit.outputs.commit_status }}
+          COMMIT_SHA: ${{ steps.commit.outputs.commit_hash }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          ECOSYSTEMS_WITHOUT_LABELS: ${{ steps.validate_labels.outputs.ecosystems_without_labels }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
           import json, os
+          from datetime import datetime
 
-          summary_parts = []
-          summary_parts.append("# 🔧 Configuración de Dependabot\n\n")
+          # Parsear datos
+          try:
+              validation_results = json.loads(os.getenv('VALIDATION_RESULTS', '[]'))
+          except:
+              validation_results = []
 
-          # Estado del commit
-          commit_status = os.getenv('COMMIT_STATUS', 'false')
-          if commit_status == 'true':
-              commit_sha = os.getenv('COMMIT_SHA', 'unknown')
-              summary_parts.append(f"## ✅ Configuración Actualizada\n\n")
-              summary_parts.append(f"🎯 **Commit**: `{commit_sha[:7]}`\n\n")
-          else:
-              summary_parts.append("## 📋 Sin Cambios\n\n")
-              summary_parts.append("La configuración ya estaba actualizada.\n\n")
-
-          # Información de ecosistemas
+          missing_labels = [l.strip() for l in os.getenv('MISSING_LABELS', '').split(',') if l.strip()]
+          has_missing = os.getenv('HAS_MISSING_LABELS') == 'true'
           ecosystems_count = os.getenv('ECOSYSTEMS_COUNT', '0')
           schedule = os.getenv('SCHEDULE', 'weekly')
-          timestamp = os.getenv('TIMESTAMP', 'unknown')
+          timestamp = os.getenv('TIMESTAMP', 'N/A')
+          commit_status = os.getenv('COMMIT_STATUS', 'desconocido')
+          commit_sha = os.getenv('COMMIT_SHA', 'N/A')
+          repo = os.getenv('GITHUB_REPOSITORY')
+          branch = os.getenv('GITHUB_REF_NAME')
+          ecosystems_without_labels = [e.strip() for e in os.getenv('ECOSYSTEMS_WITHOUT_LABELS', '').split(',') if e.strip()]
 
-          summary_parts.append("## 📊 Detalles de Configuración\n\n")
-          summary_parts.append("| Propiedad | Valor |\n")
-          summary_parts.append("|-----------|-------|\n")
-          summary_parts.append(f"| 🎯 Ecosistemas | **{ecosystems_count}** |\n")
-          summary_parts.append(f"| ⏰ Frecuencia | `{schedule}` |\n")
-          summary_parts.append(f"| 🕐 Generado | {timestamp} |\n\n")
+          # Iconos por ecosistema
+          ecosystem_icons = {
+              'pip': '🐍',
+              'npm': '📦',
+              'docker': '🐳',
+              'github-actions': '⚡',
+              'composer': '🎼',
+              'bundler': '💎',
+              'cargo': '🦀',
+              'gomod': '🐹',
+              'gradle': '🐘',
+              'maven': '☕',
+              'nuget': '📘'
+          }
 
-          # Validación de labels
-          has_missing = os.getenv('HAS_MISSING_LABELS', 'false')
-          if has_missing == 'true':
-              missing_labels = os.getenv('MISSING_LABELS', '')
-              summary_parts.append("## ⚠️ Labels Faltantes\n\n")
-              summary_parts.append(f"Los siguientes labels no existen en el repositorio:\n\n")
-              summary_parts.append(f"```\n{missing_labels}\n```\n\n")
-              summary_parts.append("> 💡 **Tip**: Crea estos labels manualmente o algunos ecosistemas no tendrán etiquetas.\n\n")
+          # Badge de estado
+          if commit_status == 'actualizado':
+              status_badge = '🟢 **Actualizado**'
+              status_color = '#28a745'
+          elif commit_status == 'sin-cambios':
+              status_badge = '🔵 **Sin Cambios**'
+              status_color = '#0366d6'
+          else:
+              status_badge = '⚪ **Desconocido**'
+              status_color = '#6c757d'
 
-          # Resultados de validación detallados
-          validation_results = os.getenv('VALIDATION_RESULTS', '[]')
-          try:
-              results = json.loads(validation_results)
-              if results:
-                  summary_parts.append("<details>\n")
-                  summary_parts.append("<summary>📋 <b>Detalle de Validación por Ecosistema</b></summary>\n\n")
-                  summary_parts.append("| Ecosistema | Directorio | Labels Válidos | Labels Inválidos |\n")
-                  summary_parts.append("|------------|------------|----------------|------------------|\n")
-                  for r in results:
-                      valid_str = f"✅ {r['valid']}" if r['valid'] > 0 else "❌ 0"
-                      invalid_str = f"⚠️ {r['invalid']}" if r['invalid'] > 0 else "✓"
-                      summary_parts.append(f"| `{r['ecosystem']}` | `{r['directory']}` | {valid_str} | {invalid_str} |\n")
-                  summary_parts.append("\n</details>\n\n")
-          except:
-              pass
+          summary_parts = []
+          
+          # Header principal
+          summary_parts.append("# 📦 Dependabot Configuration Summary\n\n")
+          summary_parts.append("---\n\n")
 
-          # Información adicional
+          # Sección: Resumen de Configuración
+          summary_parts.append("## 📊 Resumen de Configuración\n\n")
+          summary_parts.append("| Métrica | Valor |\n")
+          summary_parts.append("|---------|-------|\n")
+          summary_parts.append(f"| 🔧 **Ecosistemas Configurados** | `{ecosystems_count}` |\n")
+          summary_parts.append(f"| 📅 **Frecuencia de Actualización** | `{schedule}` |\n")
+          summary_parts.append(f"| 🕒 **Ejecutado el** | `{timestamp}` |\n")
+          summary_parts.append(f"| 📝 **Estado del Commit** | {status_badge} |\n")
+          
+          if commit_sha != 'N/A':
+              commit_url = f"https://github.com/{repo}/commit/{commit_sha}"
+              summary_parts.append(f"| 🔗 **Commit SHA** | [`{commit_sha[:7]}`]({commit_url}) |\n")
+          else:
+              summary_parts.append(f"| 🔗 **Commit SHA** | `{commit_sha}` |\n")
+          
+          summary_parts.append("\n---\n\n")
+
+          # Sección: Ecosistemas Configurados (accordion)
+          summary_parts.append("<details open>\n")
+          summary_parts.append("<summary><h2>🔧 Ecosistemas Configurados</h2></summary>\n\n")
+          
+          if validation_results:
+              summary_parts.append("| Ecosistema | Directorio | PRs | Labels Válidos | Labels Omitidos | Prefix |\n")
+              summary_parts.append("|------------|------------|-----|----------------|-----------------|--------|\n")
+              
+              for result in validation_results:
+                  icon = ecosystem_icons.get(result['ecosystem'], '📦')
+                  eco_name = f"{icon} **{result['ecosystem']}**"
+                  directory = f"`{result['directory']}`"
+                  valid_count = result['valid_labels_count']
+                  invalid_count = result['invalid_labels_count']
+                  
+                  # Obtener prefix y PR limit del JSON original
+                  prefix = '—'
+                  pr_limit = '—'
+                  try:
+                      ecosystems = json.loads(os.getenv('VALIDATED_ECOSYSTEMS', '[]'))
+                      for eco in ecosystems:
+                          if eco['ecosystem'] == result['ecosystem'] and eco.get('directory') == result['directory']:
+                              prefix = f"`{eco.get('prefix', '—')}`"
+                              pr_limit = f"`{eco.get('open-pull-requests-limit', eco.get('pr_limit', '—'))}`"
+                              break
+                  except:
+                      pass
+                  
+                  valid_labels_cell = f"✅ `{valid_count}`" if valid_count > 0 else "—"
+                  invalid_labels_cell = f"⚠️ `{invalid_count}`" if invalid_count > 0 else "✅ `0`"
+                  
+                  summary_parts.append(f"| {eco_name} | {directory} | {pr_limit} | {valid_labels_cell} | {invalid_labels_cell} | {prefix} |\n")
+          else:
+              summary_parts.append("*No hay ecosistemas configurados*\n\n")
+          
+          summary_parts.append("\n</details>\n\n")
+          summary_parts.append("---\n\n")
+
+          # Sección: Labels Faltantes (si existen)
+          if has_missing and missing_labels:
+              summary_parts.append("<details open>\n")
+              summary_parts.append("<summary><h2>⚠️ Labels Faltantes Detectados</h2></summary>\n\n")
+              
+              summary_parts.append(f"> **{len(missing_labels)} label(s)** no existen en el repositorio y fueron omitidos.\n\n")
+              
+              # Tabla de labels faltantes
+              summary_parts.append("| # | Label Faltante | Ecosistema Afectado |\n")
+              summary_parts.append("|---|----------------|---------------------|\n")
+              
+              label_index = 1
+              for result in validation_results:
+                  if result['invalid_labels']:
+                      eco_display = f"{ecosystem_icons.get(result['ecosystem'], '📦')} `{result['ecosystem']}` (`{result['directory']}`)"
+                      for label in result['invalid_labels']:
+                          summary_parts.append(f"| {label_index} | `{label}` | {eco_display} |\n")
+                          label_index += 1
+              
+              summary_parts.append("\n")
+              
+              # Enlace único para crear labels
+              labels_url = f"https://github.com/{repo}/labels"
+              summary_parts.append(f"### 🔧 Acción Requerida\n\n")
+              summary_parts.append(f"Para que estos labels se apliquen en futuros PRs de Dependabot:\n\n")
+              summary_parts.append(f"1. 🏷️ **[Crea los labels faltantes aquí]({labels_url})**\n")
+              summary_parts.append(f"2. 🔄 Vuelve a ejecutar este workflow para actualizar la configuración\n\n")
+              
+              summary_parts.append("</details>\n\n")
+              summary_parts.append("---\n\n")
+
+          # Sección: Enlaces Útiles (accordion)
           summary_parts.append("<details>\n")
-          summary_parts.append("<summary>ℹ️ <b>¿Qué hace Dependabot?</b></summary>\n\n")
-          summary_parts.append("Dependabot automáticamente:\n\n")
-          summary_parts.append("- 🔍 **Escanea** dependencias regularmente\n")
-          summary_parts.append("- 🛡️ **Detecta** vulnerabilidades de seguridad\n")
-          summary_parts.append("- 🚀 **Crea PRs** automáticamente con las actualizaciones\n")
-          summary_parts.append("- ✅ **Ejecuta tests** en los PRs (si están configurados)\n")
-          summary_parts.append("- 🎯 **Respeta** semantic versioning\n\n")
+          summary_parts.append("<summary><h2>🔗 Enlaces Útiles</h2></summary>\n\n")
+          summary_parts.append(f"- 📋 [Ver configuración generada](https://github.com/{repo}/blob/{branch}/.github/dependabot.yml)\n")
+          summary_parts.append(f"- 📊 [Dependency graph](https://github.com/{repo}/network/dependencies)\n")
+          summary_parts.append(f"- 🔄 [Pull requests de Dependabot](https://github.com/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot)\n")
+          summary_parts.append(f"- 🛡️ [Security advisories](https://github.com/{repo}/security/advisories)\n")
+          summary_parts.append(f"- 🏷️ [Gestionar labels](https://github.com/{repo}/labels)\n")
+          summary_parts.append("\n</details>\n\n")
+          summary_parts.append("---\n\n")
+
+          # Sección: ¿Qué hace Dependabot? (accordion)
+          summary_parts.append("<details>\n")
+          summary_parts.append("<summary><h2>❓ ¿Qué hace Dependabot?</h2></summary>\n\n")
+          summary_parts.append("Dependabot es un bot de GitHub que:\n\n")
+          summary_parts.append("- 🔍 **Escanea** tus dependencias automáticamente\n")
+          summary_parts.append("- 📦 **Detecta** actualizaciones disponibles\n")
+          summary_parts.append("- 🔄 **Crea PRs** con las actualizaciones\n")
+          summary_parts.append("- 🛡️ **Identifica** vulnerabilidades de seguridad\n")
+          summary_parts.append("- ⚡ **Mantiene** tu proyecto actualizado sin esfuerzo manual\n\n")
+          summary_parts.append("📚 [Documentación oficial](https://docs.github.com/en/code-security/dependabot)\n\n")
           summary_parts.append("</details>\n\n")
+          summary_parts.append("---\n\n")
 
+          # Sección: Personalizar Configuración (accordion)
           summary_parts.append("<details>\n")
-          summary_parts.append("<summary>🛠️ <b>Personalizar Configuración</b></summary>\n\n")
+          summary_parts.append("<summary><h2>🛠️ Personalizar Configuración</h2></summary>\n\n")
           summary_parts.append("Para modificar la configuración, edita el workflow que llama a este reusable:\n\n")
           summary_parts.append("```yaml\n")
           summary_parts.append("with:\n")
@@ -332,14 +433,15 @@ jobs:
           summary_parts.append("  pr_limit: 10       # Ajustar límite de PRs\n")
           summary_parts.append("  ecosystems: |      # Modificar ecosistemas\n")
           summary_parts.append("    [\n")
-          summary_parts.append('      {"ecosystem": "pip", "directory": "/api"}\n')
+          summary_parts.append('      {"ecosystem": "pip", "directory": "/api", "labels": "dependencies,python"}\n')
           summary_parts.append("    ]\n")
           summary_parts.append("```\n\n")
           summary_parts.append("</details>\n\n")
-
           summary_parts.append("---\n\n")
-          summary_parts.append("**🎉 Configuración completada exitosamente!**\n\n")
-          summary_parts.append("> 💡 **Tip**: Usa `workflow_dispatch` en el workflow llamador para regenerar esta configuración manualmente.\n")
+
+          # Footer
+          summary_parts.append("**✨ Configuración completada exitosamente**\n\n")
+          summary_parts.append("> 💡 **Tip:** Usa `workflow_dispatch` para regenerar esta configuración manualmente cuando lo necesites.\n")
 
           # Escribir summary
           summary = ''.join(summary_parts)
@@ -349,15 +451,4 @@ jobs:
           print("✅ Summary generado correctamente")
           SCRIPT_EOF
 
-          # ✅ PASAR DATOS VALIDADOS
-          VALIDATION_RESULTS='${{ steps.validate_labels.outputs.validation_results }}' \
-          MISSING_LABELS='${{ steps.validate_labels.outputs.missing_labels }}' \
-          HAS_MISSING_LABELS='${{ steps.validate_labels.outputs.has_missing_labels }}' \
-          ECOSYSTEMS_COUNT='${{ steps.generate.outputs.ecosystems_count }}' \
-          SCHEDULE='${{ steps.generate.outputs.schedule }}' \
-          TIMESTAMP='${{ steps.generate.outputs.timestamp }}' \
-          COMMIT_STATUS='${{ steps.commit.outputs.changes_detected }}' \
-          COMMIT_SHA='${{ steps.commit.outputs.commit_hash }}' \
-          GITHUB_REPOSITORY='${{ github.repository }}' \
-          GITHUB_REF_NAME='${{ github.ref_name }}' \
           python3 /tmp/generate_summary.py
