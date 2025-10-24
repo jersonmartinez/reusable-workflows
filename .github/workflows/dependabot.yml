@@ -69,16 +69,25 @@ jobs:
 
           missing_by_ecosystem = defaultdict(list)
           valid_by_ecosystem = defaultdict(list)
+          filtered_ecosystems = []
           all_missing = set()
 
           for eco in ecosystems:
               labels = [l.strip() for l in eco.get('labels', '').split(',') if l.strip()]
+              valid_labels = []
+              
               for label in labels:
                   if label.lower() in existing_labels:
                       valid_by_ecosystem[f"{eco['ecosystem']}|{eco['directory']}"].append(label)
+                      valid_labels.append(label)
                   else:
                       missing_by_ecosystem[f"{eco['ecosystem']}|{eco['directory']}"].append(label)
                       all_missing.add(label)
+
+              # Crear ecosistema filtrado con SOLO labels válidos
+              filtered_eco = eco.copy()
+              filtered_eco['labels'] = ','.join(valid_labels)
+              filtered_ecosystems.append(filtered_eco)
 
           # Generar outputs
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
@@ -86,6 +95,12 @@ jobs:
               f.write(f"missing_count={len(all_missing)}\n")
               f.write(f"valid_count={sum(len(v) for v in valid_by_ecosystem.values())}\n")
               f.write(f"has_missing={'true' if all_missing else 'false'}\n")
+              
+              # Exportar ecosistemas filtrados
+              filtered_json = json.dumps(filtered_ecosystems)
+              f.write(f"filtered_ecosystems<<EOF\n")
+              f.write(f"{filtered_json}\n")
+              f.write(f"EOF\n")
 
           # Guardar datos para el summary
           with open('/tmp/validation_data.json', 'w') as f:
@@ -96,30 +111,35 @@ jobs:
               }, f)
 
           if all_missing:
-              print(f"::warning title=Labels Faltantes::Se encontraron {len(all_missing)} labels sin configurar")
+              print(f"::warning title=Labels Faltantes::Se encontraron {len(all_missing)} labels sin configurar. Serán omitidos del archivo generado.")
+              for label in sorted(all_missing):
+                  print(f"  ⚠️ {label}")
           else:
               print("::notice title=Validación Exitosa::Todos los labels están configurados correctamente")
+          
+          print(f"\n📊 Resumen:")
+          print(f"  ✅ Labels válidos: {sum(len(v) for v in valid_by_ecosystem.values())}")
+          print(f"  ⚠️ Labels faltantes: {len(all_missing)}")
+          print(f"  📦 Ecosistemas: {len(ecosystems)}")
           SCRIPT_EOF
 
           python3 /tmp/validate_labels.py
 
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
-      - name: 📦 Install PyYAML
-        run: pip install pyyaml
-
       - name: 📝 Generate Dependabot Config
+        env:
+          FILTERED_ECOSYSTEMS: ${{ steps.validate_labels.outputs.filtered_ecosystems }}
         run: |
           cat > /tmp/generate_config.py << 'SCRIPT_EOF'
           import json, os, sys
 
           try:
-              ecosystems = json.loads('''${{ inputs.ecosystems }}''')
+              ecosystems = json.loads(os.getenv('FILTERED_ECOSYSTEMS', '[]'))
           except json.JSONDecodeError as e:
               print(f"::error::JSON inválido: {e}")
+              sys.exit(1)
+
+          if not ecosystems:
+              print("::error::No hay ecosistemas para configurar")
               sys.exit(1)
 
           schedule = '${{ inputs.schedule }}'
@@ -139,6 +159,7 @@ jobs:
               if target_branch:
                   update['target-branch'] = target_branch
 
+              # Los labels ya están filtrados (solo válidos)
               labels = [l.strip() for l in eco.get('labels', '').split(',') if l.strip()]
               if labels:
                   update['labels'] = labels
@@ -152,13 +173,11 @@ jobs:
           import yaml
           os.makedirs('.github', exist_ok=True)
 
-          # Generar YAML con indentación correcta
           with open('.github/dependabot.yml', 'w') as f:
               yaml.dump(config, f, sort_keys=False, default_flow_style=False, indent=2)
 
-          print("✅ Configuración generada exitosamente")
+          print("✅ Configuración generada exitosamente (solo con labels válidos)")
 
-          # Verificar el archivo generado
           with open('.github/dependabot.yml', 'r') as f:
               content = f.read()
               print("\n📄 Contenido generado:")
@@ -174,80 +193,77 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           if git diff --quiet .github/dependabot.yml; then
-            echo "status=unchanged" >> $GITHUB_OUTPUT
-            echo "::notice::No hay cambios en la configuración"
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "📌 Sin cambios - La configuración está actualizada"
           else
             git add .github/dependabot.yml
-            git commit -m "chore(deps): update dependabot configuration [skip ci]"
+            git commit -m "chore: update dependabot configuration"
             git push
-            echo "status=updated" >> $GITHUB_OUTPUT
-            echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-            echo "::notice::Configuración actualizada y commitada"
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "commit_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+            echo "✅ Cambios commiteados y pusheados"
           fi
 
-      - name: 🔍 Check Dependabot PRs
-        id: check_prs
-        continue-on-error: true
+      - name: 🔄 Detect Dependabot PRs
+        id: detect_prs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Esperar un momento para que GitHub sincronice
-          sleep 3
-
-          # Obtener PRs de Dependabot
           prs_json=$(gh pr list \
-            --repo ${{ github.repository }} \
             --author "app/dependabot" \
             --state open \
-            --json number,title,createdAt,labels,updatedAt \
+            --json number,title,url,labels,createdAt,headRefName \
             --limit 50 2>/dev/null || echo '[]')
-
+          
           echo "prs_data<<EOF" >> $GITHUB_OUTPUT
           echo "$prs_json" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
-          prs_count=$(echo "$prs_json" | jq '. | length' 2>/dev/null || echo "0")
+          
+          prs_count=$(echo "$prs_json" | jq '. | length')
           echo "prs_count=$prs_count" >> $GITHUB_OUTPUT
-
-          echo "::notice::Se encontraron $prs_count PRs de Dependabot"
+          
+          echo "📊 PRs detectados: $prs_count"
 
       - name: 📊 Generate Summary
-        if: always()
         env:
-          ECOSYSTEMS_JSON: ${{ inputs.ecosystems }}
-          DEFAULT_PR_LIMIT: ${{ inputs.pr_limit }}
-          COMMIT_STATUS: ${{ steps.commit.outputs.status }}
-          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
-          PRS_DATA: ${{ steps.check_prs.outputs.prs_data }}
-          PRS_COUNT: ${{ steps.check_prs.outputs.prs_count }}
-          GITHUB_SERVER_URL: ${{ github.server_url }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+          PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
+          PRS_COUNT: ${{ steps.detect_prs.outputs.prs_count }}
+          CHANGED: ${{ steps.commit.outputs.changed }}
+          COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
+          MISSING_COUNT: ${{ steps.validate_labels.outputs.missing_count }}
+          VALID_COUNT: ${{ steps.validate_labels.outputs.valid_count }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
-          import json, os, sys
+          import json, os
           from datetime import datetime
 
           repo = os.getenv('GITHUB_REPOSITORY')
           server_url = os.getenv('GITHUB_SERVER_URL', 'https://github.com')
-          run_id = os.getenv('GITHUB_RUN_ID')
-          default_pr_limit = os.getenv('DEFAULT_PR_LIMIT', '5')
+          changed = os.getenv('CHANGED', 'false')
+          commit_sha = os.getenv('COMMIT_SHA', '')
+          missing_count = int(os.getenv('MISSING_COUNT', '0'))
+          valid_count = int(os.getenv('VALID_COUNT', '0'))
 
           # Cargar datos de validación
           try:
               with open('/tmp/validation_data.json', 'r') as f:
-                  validation = json.load(f)
-          except:
-              validation = {'missing_by_ecosystem': {}, 'valid_by_ecosystem': {}, 'existing_labels': {}}
+                  validation_data = json.load(f)
+              missing_by_ecosystem = validation_data['missing_by_ecosystem']
+              valid_by_ecosystem = validation_data['valid_by_ecosystem']
+              existing_labels = validation_data['existing_labels']
+          except Exception as e:
+              print(f"::error::No se pudo cargar validation_data.json: {e}")
+              missing_by_ecosystem = {}
+              valid_by_ecosystem = {}
+              existing_labels = {}
 
-          # Parsear ecosistemas
+          # Cargar ecosistemas originales
           try:
-              ecosystems = json.loads(os.getenv('ECOSYSTEMS_JSON', '[]'))
+              ecosystems = json.loads('''${{ inputs.ecosystems }}''')
           except:
               ecosystems = []
 
-          # Parsear PRs
-          prs_count = int(os.getenv('PRS_COUNT', '0'))
+          # Cargar PRs
           try:
               prs_raw = os.getenv('PRS_DATA', '[]')
               prs_data = json.loads(prs_raw) if prs_raw and prs_raw.strip() != '' else []
@@ -255,42 +271,40 @@ jobs:
               print(f"::debug::Error parseando PRs: {e}")
               prs_data = []
 
-          commit_status = os.getenv('COMMIT_STATUS', 'unknown')
-          commit_sha = os.getenv('COMMIT_SHA', 'N/A')
+          prs_count = int(os.getenv('PRS_COUNT', '0'))
 
-          # Generar summary
           summary = []
 
           # Header
           summary.append("# 🤖 Configuración de Dependabot\n\n")
 
-          # Estado del commit con enlace
-          if commit_status == 'updated':
+          # Estado
+          if changed == 'true' and commit_sha:
               commit_url = f"{server_url}/{repo}/commit/{commit_sha}"
               summary.append(f"✅ **Configuración actualizada** • Commit: [📝 `{commit_sha[:7]}`]({commit_url})\n\n")
           else:
               summary.append("ℹ️ **Sin cambios** • La configuración está actualizada\n\n")
 
-          # Resumen rápido en tabla compacta
-          total_labels = sum(len(v) for v in validation['valid_by_ecosystem'].values())
-          missing_count = sum(len(v) for v in validation['missing_by_ecosystem'].values())
-          
-          summary.append("### 📊 Resumen Ejecutivo\n\n")
+          # Resumen ejecutivo
+          total_ecosystems = len(ecosystems)
+          total_labels = valid_count + missing_count
+
+          summary.append("## 📊 Resumen Ejecutivo\n\n")
           summary.append("| 🔧 Ecosistemas | 🏷️ Labels Válidos | ⚠️ Labels Faltantes | 🔄 PRs Activos |\n")
           summary.append("|:--------------:|:-----------------:|:-------------------:|:--------------:|\n")
-          summary.append(f"| **{len(ecosystems)}** | **{total_labels}** | **{missing_count}** | **{prs_count}** |\n\n")
+          summary.append(f"| **{total_ecosystems}** | **{valid_count}** | **{missing_count}** | **{prs_count}** |\n\n")
 
-          # Tabla consolidada de ecosistemas con ancho fijo
+          # Tabla de ecosistemas
           summary.append("<details open>\n")
-          summary.append("<summary><h3>📦 Ecosistemas Configurados</h3></summary>\n\n")
-          summary.append("<table style='width:100%'>\n")
+          summary.append("<summary><h2>📦 Ecosistemas Configurados</h2></summary>\n\n")
+          summary.append("<table>\n")
           summary.append("<colgroup>\n")
-          summary.append("<col style='width:12%'>\n")  # Ecosistema
-          summary.append("<col style='width:12%'>\n")  # Directorio
-          summary.append("<col style='width:10%'>\n")  # Prefijo
-          summary.append("<col style='width:8%'>\n")   # PR Limit
-          summary.append("<col style='width:28%'>\n")  # Labels Válidos
-          summary.append("<col style='width:30%'>\n")  # Labels Faltantes
+          summary.append("<col style='width:12%'>\n")
+          summary.append("<col style='width:12%'>\n")
+          summary.append("<col style='width:10%'>\n")
+          summary.append("<col style='width:8%'>\n")
+          summary.append("<col style='width:28%'>\n")
+          summary.append("<col style='width:30%'>\n")
           summary.append("</colgroup>\n")
           summary.append("<thead>\n")
           summary.append("<tr>\n")
@@ -306,114 +320,122 @@ jobs:
 
           for eco in ecosystems:
               eco_key = f"{eco['ecosystem']}|{eco['directory']}"
-              valid_labels = validation['valid_by_ecosystem'].get(eco_key, [])
-              missing_labels = validation['missing_by_ecosystem'].get(eco_key, [])
-              existing_labels = validation['existing_labels']
+              
+              valid_labels = valid_by_ecosystem.get(eco_key, [])
+              missing_labels = missing_by_ecosystem.get(eco_key, [])
 
-              # Generar badges inline para labels válidos
               valid_badges = []
               for label in valid_labels:
-                  label_data = existing_labels.get(label.lower(), {})
-                  color = label_data.get('color', '0366d6')
-                  label_encoded = label.replace(" ", "%20").replace("-", "--")
-                  badge_url = f"https://img.shields.io/badge/-{label_encoded}-{color}?style=flat-square"
-                  link = f'{server_url}/{repo}/labels/{label.replace(" ", "%20")}'
-                  valid_badges.append(f'<a href="{link}"><img src="{badge_url}" alt="{label}" style="margin:2px"/></a>')
+                  label_info = existing_labels.get(label.lower(), {})
+                  color = label_info.get('color', '0366d6')
+                  valid_badges.append(
+                      f"<img src='https://img.shields.io/badge/{label.replace('-', '--')}-{color}?style=flat-square' alt='{label}' style='margin:2px'>"
+                  )
 
-              # Labels faltantes inline separados por espacios
-              missing_badges = [f'<code style="white-space:nowrap">{label}</code>' for label in missing_labels]
-
-              eco_pr_limit = eco.get('pr_limit', default_pr_limit)
+              missing_badges = [
+                  f'<code style="white-space:nowrap">{label}</code>' 
+                  for label in missing_labels
+              ]
 
               summary.append("<tr>\n")
               summary.append(f"<td><code>{eco['ecosystem']}</code></td>\n")
               summary.append(f"<td><code>{eco['directory']}</code></td>\n")
               summary.append(f"<td><code>{eco.get('prefix', '-')}</code></td>\n")
-              summary.append(f"<td align='center'><b>{eco_pr_limit}</b></td>\n")
-              summary.append(f"<td style='white-space:nowrap'>{' '.join(valid_badges) if valid_badges else '➖'}</td>\n")
+              summary.append(f"<td>{eco.get('pr_limit', '${{ inputs.pr_limit }}')}</td>\n")
+              summary.append(f"<td>{' '.join(valid_badges) if valid_badges else '➖'}</td>\n")
               summary.append(f"<td>{' '.join(missing_badges) if missing_badges else '✅'}</td>\n")
               summary.append("</tr>\n")
 
           summary.append("</tbody>\n")
           summary.append("</table>\n\n")
 
-          # Warning si hay labels faltantes
-          all_missing = set()
-          for labels in validation['missing_by_ecosystem'].values():
-              all_missing.update(labels)
-
-          if all_missing:
-              labels_create_url = f"{server_url}/{repo}/labels/new"
+          if missing_count > 0:
+              labels_url = f"{server_url}/{repo}/labels"
               summary.append(f"> ⚠️ **Acción Recomendada:** Algunos labels no existen. ")
-              summary.append(f"<a href='{labels_create_url}'>🏷️ <b>Crear labels faltantes</b></a> ")
-              summary.append("o ajustar la configuración.\n\n")
+              summary.append(f"<a href='{labels_url}'>🔧 <b>Crear labels faltantes</b></a> o ajustar la configuración.\n\n")
 
           summary.append("</details>\n\n")
 
-          # PRs Activos en acordeón
-          if prs_count > 0:
+          # PRs de Dependabot
+          if prs_data and len(prs_data) > 0:
               summary.append("<details>\n")
-              summary.append(f"<summary><h3>🔄 Pull Requests de Dependabot ({prs_count})</h3></summary>\n\n")
+              summary.append(f"<summary><h2>🔄 Pull Requests de Dependabot ({min(prs_count, 15)})</h2></summary>\n\n")
+
               summary.append("<table>\n")
-              summary.append("<tr><th>#</th><th>Título</th><th>Labels</th><th>Actualizado</th></tr>\n")
+              summary.append("<thead>\n")
+              summary.append("<tr>\n")
+              summary.append("<th>PR</th>\n")
+              summary.append("<th>Título</th>\n")
+              summary.append("<th>Labels</th>\n")
+              summary.append("<th>Creado</th>\n")
+              summary.append("</tr>\n")
+              summary.append("</thead>\n")
+              summary.append("<tbody>\n")
 
               for pr in prs_data[:15]:
-                  pr_number = pr['number']
-                  pr_title = pr['title'][:70] + ('...' if len(pr['title']) > 70 else '')
-                  pr_labels = ', '.join([f"`{l['name']}`" for l in pr.get('labels', [])[:3]])
-                  pr_date = pr.get('updatedAt', pr.get('createdAt', 'N/A'))[:10]
-                  pr_link = f"{server_url}/{repo}/pull/{pr_number}"
+                  pr_number = pr.get('number', 'N/A')
+                  pr_url = pr.get('url', '#')
+                  pr_title = pr.get('title', 'Sin título')
+                  pr_labels = ', '.join([l.get('name', '') for l in pr.get('labels', [])])
+                  pr_created = pr.get('createdAt', '')
+                  
+                  try:
+                      pr_date = datetime.fromisoformat(pr_created.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+                  except:
+                      pr_date = 'N/A'
 
                   summary.append("<tr>\n")
-                  summary.append(f"<td><a href='{pr_link}'><b>#{pr_number}</b></a></td>\n")
+                  summary.append(f"<td><a href='{pr_url}'><b>#{pr_number}</b></a></td>\n")
                   summary.append(f"<td>{pr_title}</td>\n")
                   summary.append(f"<td>{pr_labels if pr_labels else '➖'}</td>\n")
                   summary.append(f"<td>{pr_date}</td>\n")
                   summary.append("</tr>\n")
 
+              summary.append("</tbody>\n")
               summary.append("</table>\n\n")
 
               if prs_count > 15:
                   prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot"
                   summary.append(f"> <a href='{prs_url}'>📋 <b>Ver todos los PRs ({prs_count})</b></a>\n\n")
-              
+
               summary.append("</details>\n\n")
           else:
               summary.append("<details>\n")
-              summary.append("<summary><h3>🔄 Pull Requests de Dependabot</h3></summary>\n\n")
+              summary.append("<summary><h2>🔄 Pull Requests de Dependabot</h2></summary>\n\n")
               summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
               summary.append("</details>\n\n")
 
-          # Enlaces útiles en acordeón
+          # Enlaces útiles
           summary.append("<details>\n")
-          summary.append("<summary><h3>🔗 Enlaces Útiles</h3></summary>\n\n")
-          
+          summary.append("<summary><h2>🔗 Enlaces Útiles</h2></summary>\n\n")
+
           config_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
           summary.append(f"- 📝 <a href='{config_url}'><b>Ver Configuración</b></a> — Archivo dependabot.yml generado\n")
-          
+
           security_url = f"{server_url}/{repo}/settings/security_analysis"
           summary.append(f"- 🛡️ <a href='{security_url}'><b>Security Settings</b></a> — Configurar análisis de seguridad\n")
-          
+
           insights_url = f"{server_url}/{repo}/network/dependencies"
           summary.append(f"- 📊 <a href='{insights_url}'><b>Dependency Graph</b></a> — Visualizar dependencias\n")
-          
+
           labels_url = f"{server_url}/{repo}/labels"
           summary.append(f"- 🏷️ <a href='{labels_url}'><b>Gestionar Labels</b></a> — Crear o editar labels\n")
-          
+
           prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
           summary.append(f"- 🔄 <a href='{prs_url}'><b>PRs de Dependabot</b></a> — Ver Pull Requests activos\n")
-          
+
           advisories_url = f"{server_url}/{repo}/security/dependabot"
           summary.append(f"- 🚨 <a href='{advisories_url}'><b>Security Alerts</b></a> — Revisar alertas de seguridad\n\n")
-          
+
           summary.append("</details>\n\n")
 
-          # Información del Workflow en acordeón
+          # Información del workflow
           summary.append("<details>\n")
           summary.append("<summary><b>📚 Sobre el Workflow Reusable</b></summary>\n\n")
 
           summary.append("#### ✅ Características\n\n")
           summary.append("- 🔍 Validación automática de labels\n")
+          summary.append("- 🛡️ Filtrado automático de labels inválidos\n")
           summary.append("- 📊 Summary con diseño consolidado y responsive\n")
           summary.append("- 🏷️ Badges con colores del repositorio\n")
           summary.append("- 🔗 Enlaces directos a recursos\n")
@@ -442,6 +464,8 @@ jobs:
           print("✅ Summary generado correctamente")
           print(f"📊 PRs detectados: {prs_count}")
           print(f"📦 Ecosistemas: {len(ecosystems)}")
+          print(f"✅ Labels válidos: {valid_count}")
+          print(f"⚠️ Labels omitidos: {missing_count}")
           SCRIPT_EOF
 
           python3 /tmp/generate_summary.py
