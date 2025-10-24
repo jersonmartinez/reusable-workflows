@@ -271,26 +271,28 @@ jobs:
           else:
               summary.append("ℹ️ **Sin cambios** • La configuración está actualizada\n\n")
 
-          # Resumen rápido en tabla
-          summary.append("### 📊 Resumen\n\n")
-          summary.append("<table>\n")
-          summary.append("<tr><th>Métrica</th><th>Valor</th></tr>\n")
-          summary.append(f"<tr><td>🔧 Ecosistemas configurados</td><td><b>{len(ecosystems)}</b></td></tr>\n")
-          
+          # Resumen rápido en tabla compacta
           total_labels = sum(len(v) for v in validation['valid_by_ecosystem'].values())
-          summary.append(f"<tr><td>🏷️ Labels validados</td><td><b>{total_labels}</b></td></tr>\n")
-          
           missing_count = sum(len(v) for v in validation['missing_by_ecosystem'].values())
-          summary.append(f"<tr><td>⚠️ Labels faltantes</td><td><b>{missing_count}</b></td></tr>\n")
           
-          summary.append(f"<tr><td>🔄 PRs activos</td><td><b>{prs_count}</b></td></tr>\n")
-          summary.append("</table>\n\n")
+          summary.append("### 📊 Resumen Ejecutivo\n\n")
+          summary.append("| 🔧 Ecosistemas | 🏷️ Labels Válidos | ⚠️ Labels Faltantes | 🔄 PRs Activos |\n")
+          summary.append("|:--------------:|:-----------------:|:-------------------:|:--------------:|\n")
+          summary.append(f"| **{len(ecosystems)}** | **{total_labels}** | **{missing_count}** | **{prs_count}** |\n\n")
 
-          summary.append("---\n\n")
-
-          # Tabla consolidada de ecosistemas
-          summary.append("## 📦 Ecosistemas Configurados\n\n")
-          summary.append("<table>\n")
+          # Tabla consolidada de ecosistemas con ancho fijo
+          summary.append("<details open>\n")
+          summary.append("<summary><h3>📦 Ecosistemas Configurados</h3></summary>\n\n")
+          summary.append("<table style='width:100%'>\n")
+          summary.append("<colgroup>\n")
+          summary.append("<col style='width:12%'>\n")  # Ecosistema
+          summary.append("<col style='width:12%'>\n")  # Directorio
+          summary.append("<col style='width:10%'>\n")  # Prefijo
+          summary.append("<col style='width:8%'>\n")   # PR Limit
+          summary.append("<col style='width:28%'>\n")  # Labels Válidos
+          summary.append("<col style='width:30%'>\n")  # Labels Faltantes
+          summary.append("</colgroup>\n")
+          summary.append("<thead>\n")
           summary.append("<tr>\n")
           summary.append("<th>Ecosistema</th>\n")
           summary.append("<th>Directorio</th>\n")
@@ -299,6 +301,8 @@ jobs:
           summary.append("<th>Labels Válidos</th>\n")
           summary.append("<th>Labels Faltantes</th>\n")
           summary.append("</tr>\n")
+          summary.append("</thead>\n")
+          summary.append("<tbody>\n")
 
           for eco in ecosystems:
               eco_key = f"{eco['ecosystem']}|{eco['directory']}"
@@ -306,30 +310,31 @@ jobs:
               missing_labels = validation['missing_by_ecosystem'].get(eco_key, [])
               existing_labels = validation['existing_labels']
 
-              # Generar badges para labels válidos
+              # Generar badges inline para labels válidos
               valid_badges = []
               for label in valid_labels:
                   label_data = existing_labels.get(label.lower(), {})
                   color = label_data.get('color', '0366d6')
-                  badge = f'<img src="https://img.shields.io/badge/-{label.replace("-", "--")}-{color}" alt="{label}"/>'
+                  label_encoded = label.replace(" ", "%20").replace("-", "--")
+                  badge_url = f"https://img.shields.io/badge/-{label_encoded}-{color}?style=flat-square"
                   link = f'{server_url}/{repo}/labels/{label.replace(" ", "%20")}'
-                  valid_badges.append(f'<a href="{link}">{badge}</a>')
+                  valid_badges.append(f'<a href="{link}"><img src="{badge_url}" alt="{label}" style="margin:2px"/></a>')
 
-              # Labels faltantes
-              missing_badges = [f'<code>{label}</code>' for label in missing_labels]
+              # Labels faltantes inline separados por espacios
+              missing_badges = [f'<code style="white-space:nowrap">{label}</code>' for label in missing_labels]
 
-              # Usar el PR limit del ecosistema o el default
               eco_pr_limit = eco.get('pr_limit', default_pr_limit)
 
               summary.append("<tr>\n")
               summary.append(f"<td><code>{eco['ecosystem']}</code></td>\n")
               summary.append(f"<td><code>{eco['directory']}</code></td>\n")
               summary.append(f"<td><code>{eco.get('prefix', '-')}</code></td>\n")
-              summary.append(f"<td align='center'>{eco_pr_limit}</td>\n")
-              summary.append(f"<td>{'<br>'.join(valid_badges) if valid_badges else '-'}</td>\n")
-              summary.append(f"<td>{'<br>'.join(missing_badges) if missing_badges else '✅'}</td>\n")
+              summary.append(f"<td align='center'><b>{eco_pr_limit}</b></td>\n")
+              summary.append(f"<td style='white-space:nowrap'>{' '.join(valid_badges) if valid_badges else '➖'}</td>\n")
+              summary.append(f"<td>{' '.join(missing_badges) if missing_badges else '✅'}</td>\n")
               summary.append("</tr>\n")
 
+          summary.append("</tbody>\n")
           summary.append("</table>\n\n")
 
           # Warning si hay labels faltantes
@@ -338,29 +343,31 @@ jobs:
               all_missing.update(labels)
 
           if all_missing:
-              summary.append("> ⚠️ **Acción Recomendada:** Algunos labels no existen en el repositorio. ")
-              summary.append(f"[**🏷️ Crear labels faltantes**]({server_url}/{repo}/labels/new) ")
-              summary.append("o ajustar la configuración en el caller.\n\n")
+              labels_create_url = f"{server_url}/{repo}/labels/new"
+              summary.append(f"> ⚠️ **Acción Recomendada:** Algunos labels no existen. ")
+              summary.append(f"<a href='{labels_create_url}'>🏷️ <b>Crear labels faltantes</b></a> ")
+              summary.append("o ajustar la configuración.\n\n")
 
-          summary.append("---\n\n")
+          summary.append("</details>\n\n")
 
-          # PRs Activos
+          # PRs Activos en acordeón
           if prs_count > 0:
-              summary.append(f"## 🔄 Pull Requests de Dependabot ({prs_count})\n\n")
+              summary.append("<details>\n")
+              summary.append(f"<summary><h3>🔄 Pull Requests de Dependabot ({prs_count})</h3></summary>\n\n")
               summary.append("<table>\n")
               summary.append("<tr><th>#</th><th>Título</th><th>Labels</th><th>Actualizado</th></tr>\n")
 
               for pr in prs_data[:15]:
                   pr_number = pr['number']
-                  pr_title = pr['title']
+                  pr_title = pr['title'][:70] + ('...' if len(pr['title']) > 70 else '')
                   pr_labels = ', '.join([f"`{l['name']}`" for l in pr.get('labels', [])[:3]])
                   pr_date = pr.get('updatedAt', pr.get('createdAt', 'N/A'))[:10]
                   pr_link = f"{server_url}/{repo}/pull/{pr_number}"
 
                   summary.append("<tr>\n")
-                  summary.append(f"<td><a href='{pr_link}'>#{pr_number}</a></td>\n")
+                  summary.append(f"<td><a href='{pr_link}'><b>#{pr_number}</b></a></td>\n")
                   summary.append(f"<td>{pr_title}</td>\n")
-                  summary.append(f"<td>{pr_labels if pr_labels else '-'}</td>\n")
+                  summary.append(f"<td>{pr_labels if pr_labels else '➖'}</td>\n")
                   summary.append(f"<td>{pr_date}</td>\n")
                   summary.append("</tr>\n")
 
@@ -368,70 +375,65 @@ jobs:
 
               if prs_count > 15:
                   prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot"
-                  summary.append(f"> 📋 Ver todos los PRs en [**Pull Requests**]({prs_url})\n\n")
+                  summary.append(f"> <a href='{prs_url}'>📋 <b>Ver todos los PRs ({prs_count})</b></a>\n\n")
+              
+              summary.append("</details>\n\n")
           else:
-              summary.append("## 🔄 Pull Requests de Dependabot\n\n")
+              summary.append("<details>\n")
+              summary.append("<summary><h3>🔄 Pull Requests de Dependabot</h3></summary>\n\n")
               summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
+              summary.append("</details>\n\n")
 
-          summary.append("---\n\n")
-
-          # Enlaces útiles
-          summary.append("## 🔗 Enlaces Útiles\n\n")
-          summary.append("<table>\n")
-          summary.append("<tr><th>Recurso</th><th>Descripción</th></tr>\n")
+          # Enlaces útiles en acordeón
+          summary.append("<details>\n")
+          summary.append("<summary><h3>🔗 Enlaces Útiles</h3></summary>\n\n")
           
           config_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
-          summary.append(f"<tr><td>📝 [Configuración]({config_url})</td><td>Ver archivo dependabot.yml generado</td></tr>\n")
+          summary.append(f"- 📝 <a href='{config_url}'><b>Ver Configuración</b></a> — Archivo dependabot.yml generado\n")
           
           security_url = f"{server_url}/{repo}/settings/security_analysis"
-          summary.append(f"<tr><td>🛡️ [Security Settings]({security_url})</td><td>Configurar análisis de seguridad</td></tr>\n")
+          summary.append(f"- 🛡️ <a href='{security_url}'><b>Security Settings</b></a> — Configurar análisis de seguridad\n")
           
           insights_url = f"{server_url}/{repo}/network/dependencies"
-          summary.append(f"<tr><td>📊 [Dependency Graph]({insights_url})</td><td>Visualizar dependencias del proyecto</td></tr>\n")
+          summary.append(f"- 📊 <a href='{insights_url}'><b>Dependency Graph</b></a> — Visualizar dependencias\n")
           
           labels_url = f"{server_url}/{repo}/labels"
-          summary.append(f"<tr><td>🏷️ [Gestionar Labels]({labels_url})</td><td>Crear o editar labels del repositorio</td></tr>\n")
+          summary.append(f"- 🏷️ <a href='{labels_url}'><b>Gestionar Labels</b></a> — Crear o editar labels\n")
           
           prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
-          summary.append(f"<tr><td>🔄 [PRs de Dependabot]({prs_url})</td><td>Ver todos los Pull Requests activos</td></tr>\n")
+          summary.append(f"- 🔄 <a href='{prs_url}'><b>PRs de Dependabot</b></a> — Ver Pull Requests activos\n")
           
           advisories_url = f"{server_url}/{repo}/security/dependabot"
-          summary.append(f"<tr><td>🚨 [Security Alerts]({advisories_url})</td><td>Revisar alertas de seguridad</td></tr>\n")
+          summary.append(f"- 🚨 <a href='{advisories_url}'><b>Security Alerts</b></a> — Revisar alertas de seguridad\n\n")
           
-          summary.append("</table>\n\n")
+          summary.append("</details>\n\n")
 
-          summary.append("---\n\n")
-
-          # Información del Workflow
+          # Información del Workflow en acordeón
           summary.append("<details>\n")
           summary.append("<summary><b>📚 Sobre el Workflow Reusable</b></summary>\n\n")
 
-          summary.append("### ✅ Características Implementadas\n\n")
-          summary.append("<table>\n")
-          summary.append("<tr><th>Característica</th><th>Descripción</th></tr>\n")
-          summary.append("<tr><td>🔍 Validación automática de labels</td><td>Detecta labels faltantes antes de generar configuración</td></tr>\n")
-          summary.append("<tr><td>📊 Summary con diseño consolidado</td><td>Tabla única con toda la información por ecosistema</td></tr>\n")
-          summary.append("<tr><td>🏷️ Badges con colores reales</td><td>Muestra los labels con sus colores del repositorio</td></tr>\n")
-          summary.append("<tr><td>🔗 Enlaces directos</td><td>A PRs, labels, configuración y security</td></tr>\n")
-          summary.append("<tr><td>🔄 Detección de PRs existentes</td><td>Lista PRs activos de Dependabot con metadata</td></tr>\n")
-          summary.append("<tr><td>📝 Configuración personalizable</td><td>Prefijos, límites de PRs, schedules por ecosistema</td></tr>\n")
-          summary.append("<tr><td>🎯 Rama objetivo configurable</td><td>Permite dirigir PRs a branches específicas</td></tr>\n")
-          summary.append("</table>\n\n")
+          summary.append("#### ✅ Características\n\n")
+          summary.append("- 🔍 Validación automática de labels\n")
+          summary.append("- 📊 Summary con diseño consolidado y responsive\n")
+          summary.append("- 🏷️ Badges con colores del repositorio\n")
+          summary.append("- 🔗 Enlaces directos a recursos\n")
+          summary.append("- 🔄 Detección de PRs existentes\n")
+          summary.append("- 📝 Configuración personalizable\n")
+          summary.append("- 🎯 Rama objetivo configurable\n\n")
 
-          summary.append("### 🔮 Mejoras Futuras Sugeridas\n\n")
-          summary.append("- 🔔 Notificaciones Slack/Discord cuando se crean PRs\n")
-          summary.append("- 📈 Matriz de compatibilidad entre versiones\n")
-          summary.append("- 🛡️ Integración automática con Security Advisories\n")
-          summary.append("- 📊 Dashboard centralizado para múltiples repositorios\n")
-          summary.append("- 🔍 Análisis predictivo de impacto de actualizaciones\n\n")
+          summary.append("#### 🔮 Mejoras Futuras\n\n")
+          summary.append("- 🔔 Notificaciones a Slack/Discord\n")
+          summary.append("- 📈 Matriz de compatibilidad\n")
+          summary.append("- 🛡️ Integración con Security Advisories\n")
+          summary.append("- 📊 Dashboard centralizado\n")
+          summary.append("- 🔍 Análisis predictivo de impacto\n\n")
 
           summary.append("</details>\n\n")
 
           # Footer
           timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
           workflow_url = f"{server_url}/jersonmartinez/reusable-workflows"
-          summary.append("---\n\n")
-          summary.append(f"<sub>🤖 Generado por [**Reusable Workflows**]({workflow_url}) • {timestamp}</sub>\n")
+          summary.append(f"<sub>🤖 Generado por <a href='{workflow_url}'><b>Reusable Workflows</b></a> • {timestamp}</sub>\n")
 
           # Escribir summary
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'w') as f:
