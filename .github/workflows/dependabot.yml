@@ -209,7 +209,8 @@ jobs:
       - name: 📊 Generate Summary
         if: always()
         env:
-          VALIDATION_DATA: ${{ steps.validate_labels.outputs }}
+          ECOSYSTEMS_JSON: ${{ inputs.ecosystems }}
+          DEFAULT_PR_LIMIT: ${{ inputs.pr_limit }}
           COMMIT_STATUS: ${{ steps.commit.outputs.status }}
           COMMIT_SHA: ${{ steps.commit.outputs.sha }}
           PRS_DATA: ${{ steps.check_prs.outputs.prs_data }}
@@ -221,6 +222,7 @@ jobs:
 
           repo = os.getenv('GITHUB_REPOSITORY')
           run_id = os.getenv('GITHUB_RUN_ID')
+          default_pr_limit = os.getenv('DEFAULT_PR_LIMIT', '5')
 
           # Cargar datos de validación
           try:
@@ -231,7 +233,7 @@ jobs:
 
           # Parsear ecosistemas
           try:
-              ecosystems = json.loads('''${{ inputs.ecosystems }}''')
+              ecosystems = json.loads(os.getenv('ECOSYSTEMS_JSON', '[]'))
           except:
               ecosystems = []
 
@@ -289,11 +291,14 @@ jobs:
               # Labels faltantes
               missing_badges = [f'<code>{label}</code>' for label in missing_labels]
 
+              # Usar el PR limit del ecosistema o el default
+              eco_pr_limit = eco.get('pr_limit', default_pr_limit)
+
               summary.append("<tr>\n")
               summary.append(f"<td><code>{eco['ecosystem']}</code></td>\n")
               summary.append(f"<td><code>{eco['directory']}</code></td>\n")
               summary.append(f"<td><code>{eco.get('prefix', '-')}</code></td>\n")
-              summary.append(f"<td align='center'>{eco.get('pr_limit', '${{ inputs.pr_limit }}')}</td>\n")
+              summary.append(f"<td align='center'>{eco_pr_limit}</td>\n")
               summary.append(f"<td>{'<br>'.join(valid_badges) if valid_badges else '-'}</td>\n")
               summary.append(f"<td>{'<br>'.join(missing_badges) if missing_badges else '✅'}</td>\n")
               summary.append("</tr>\n")
@@ -308,7 +313,7 @@ jobs:
           if all_missing:
               summary.append("> ⚠️ **Acción Recomendada:** Algunos labels no existen en el repositorio. ")
               summary.append(f"[**Crear labels faltantes**](https://github.com/{repo}/labels/new) ")
-              summary.append(f"o ajustar la configuración en el caller.\n\n")
+              summary.append("o ajustar la configuración en el caller.\n\n")
 
           summary.append("---\n\n")
 
