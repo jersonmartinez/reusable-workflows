@@ -1,166 +1,148 @@
-# 🔁 Workflow Reusable de Dependabot
+🔁 Workflow reusable de Dependabot
 
-Este workflow permite implementar Dependabot de forma automatizada y parametrizable en cualquier repositorio de GitHub, con la opción de ejecutarse bajo demanda o con programación.
+Este repositorio incluye un workflow reusable que automatiza la gestión de Dependabot para cualquier repositorio consumidor. Puede operar en dos modos: programado (escribe/actualiza `.github/dependabot.yml`) o bajo demanda (solicita a Dependabot que procese un directorio ahora mismo).
 
-> 📍 **Ubicación:** `.github/workflows/dependabot-workflow.yml`
+Ubicación del reusable: `.github/workflows/dependabot.yml`
 
-## 🤖 ¿Qué es Dependabot?
+## Resumen rápido
 
-Dependabot es una herramienta de GitHub que automatiza la gestión de dependencias en tu proyecto. Detecta cuando hay actualizaciones disponibles para las dependencias de tu proyecto y crea pull requests para actualizarlas.
+- Modo programado: genera o actualiza `.github/dependabot.yml` añadiendo o sustituyendo únicamente la entrada correspondiente al par `package-ecosystem` + `directory`.
+- Modo bajo demanda: elimina la entrada programada correspondiente (si existe) y llama a la API de Dependabot para pedir un escaneo inmediato.
+- Idempotente y colaborativo: el workflow hace upsert (merge) de la entrada solicitada y evita subir cambios si la entrada ya existe y es idéntica.
 
-## ✨ Características del Workflow
+## Cómo funciona (alto nivel)
 
-- **Simple y directo**: Diseñado para ser fácil de implementar y usar.
-- **Ejecución bajo demanda**: Puede ejecutarse como parte de un pipeline de CI/CD.
-- **Ejecución programada**: También puede configurarse con una programación.
-- **Auto-aprobación**: Opción para aprobar automáticamente los PRs de Dependabot.
-- **Auto-fusión**: Opción para fusionar automáticamente los PRs aprobados.
-- **Detección automática del manifiesto**: Identifica el archivo de dependencias según el ecosistema o permite definirlo manualmente.
-- **Actualización idempotente**: Fusiona entradas en `.github/dependabot.yml` mediante la API de GitHub, evitando conflictos cuando se invoca el workflow desde varios jobs o repositorios.
+1. El job recibe inputs: `package_ecosystem`, `directory`, `schedule_interval`, entre otros.
+2. Si `schedule_interval` está vacío (cadena vacía):
+   - El workflow entra en modo bajo demanda: elimina la entrada programada para ese `ecosistema+directorio` (si existe) y solicita a Dependabot un escaneo inmediato mediante `POST /repos/{owner}/{repo}/dependabot/updates`.
+   - Si la llamada devuelve 404 (o hay errores de permisos), el paso añade un aviso en el summary pero no hace fallar todo el job.
+3. Si `schedule_interval` está presente y es válido (`daily|weekly|monthly|quarterly|semiannually|yearly|cron`):
+   - Se construye la entrada YAML deseada para ese par y se recupera el `.github/dependabot.yml` actual (si existe).
+   - Se elimina la entrada previa para el mismo `ecosistema+directorio` y se añade la nueva entrada (merge/upsert).
+   - Antes de escribir, se compara la entrada existente: si es idéntica, se omite la subida para ahorrar operaciones.
+   - La escritura se realiza vía API (`PUT /repos/{owner}/{repo}/contents/.github/dependabot.yml`) con reintentos y reconciliación del `sha` para mitigar conflictos 409.
 
-## 🛠️ Cómo implementar
+## Inputs (parámetros)
 
-### 1. Referencia al workflow
+- `package_ecosystem` (string, requerido): ecosistema (npm, pip, maven, docker, github-actions, ...).
+- `directory` (string, requerido): directorio en el repo donde está el manifiesto (p. ej. `/`, `/api`, `/app`).
+- `dependency_file_path` (string, opcional): ruta exacta del manifiesto si quieres forzarla (por ejemplo `requirements.txt`, `Dockerfile`). Si se deja vacío el workflow intenta detectar el archivo según el ecosistema.
+- `schedule_interval` (string, opcional): frecuencia de verificación (daily, weekly, monthly, quarterly, semiannually, yearly, cron). Cadena vacía => modo bajo demanda.
+- `open_pull_requests_limit` (number, opcional): límite de PRs abiertos (por defecto 10).
+- `auto_approve` (boolean, opcional): si `true`, el job de auto-approve se habilita para aprobar PRs de Dependabot.
+- `auto_merge` (boolean, opcional): si `true`, habilita el job que intenta auto-fusionar PRs.
+- `auto_merge_label` (string): etiqueta requerida para filtrar PRs a auto-merge (por defecto `dependencies`).
+- `allow_major_versions` (boolean): si `false`, añade una regla `ignore` para `version-update:semver-major`.
 
-#### Opción 1: Ejecución bajo demanda (como parte de un pipeline)
+## Ejemplos de uso
 
-```yaml
-name: CI/CD Pipeline
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    # ... otros pasos del pipeline ...
-    
-  check-dependencies:
-    needs: build  # Ejecutar después de la compilación
-    uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
-    with:
-      package_ecosystem: "npm"        # Ecosistema de paquetes (npm, pip, maven, etc.)
-      directory: "/"                  # Directorio donde se encuentra el archivo de dependencias
-      dependency_file_path: "package.json"  # Opcional: ruta exacta del manifiesto
-      auto_approve: true              # Aprobar automáticamente PRs
-      auto_merge: true                # Fusionar automáticamente PRs
-```
-
-#### Opción 2: Ejecución programada
+1) Programado (añade/actualiza la entrada en `.github/dependabot.yml`):
 
 ```yaml
-name: Dependabot
-
-on:
-  schedule:
-    - cron: '0 0 * * 1'  # Ejecutar cada lunes a medianoche
-  workflow_dispatch:     # Permitir ejecución manual
-
 jobs:
-  dependabot:
-    uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
+  dependabot-api:
+    uses: jersonmartinez/reusable-workflows/.github/workflows/dependabot.yml@main
     with:
-      package_ecosystem: "npm"        # Ecosistema de paquetes (npm, pip, maven, etc.)
-      directory: "/"                  # Directorio donde se encuentra el archivo de dependencias
-      schedule_interval: "weekly"     # Frecuencia de verificación
-      auto_approve: true              # Aprobar automáticamente PRs
-      auto_merge: true                # Fusionar automáticamente PRs
-      auto_merge_label: "dependencies" # Etiqueta requerida para auto-merge
+      package_ecosystem: "pip"
+      directory: "/api"
+      schedule_interval: "weekly"
+      open_pull_requests_limit: 10
+      allow_major_versions: false
 ```
 
-### 2. Parámetros disponibles
+2) Bajo demanda (no escribe `.github/dependabot.yml`, solicita escaneo inmediato):
 
-| Parámetro | Descripción | Requerido | Valor por defecto |
-|-----------|-------------|-----------|-------------------|
-| `package_ecosystem` | Ecosistema de paquetes (npm, pip, maven, docker, etc.) | Sí | - |
-| `directory` | Directorio donde se encuentra el archivo de dependencias | Sí | - |
-| `dependency_file_path` | Ruta exacta del archivo de dependencias. Si se omite, el workflow intenta detectarlo automáticamente según el ecosistema | No | Detectado automáticamente |
-| `schedule_interval` | Frecuencia de verificación (daily, weekly, monthly). Si está vacío, se ejecuta bajo demanda | No | "" |
-| `open_pull_requests_limit` | Límite de PRs abiertos simultáneamente | No | 10 |
-| `auto_approve` | Aprobar automáticamente PRs de Dependabot | No | false |
-| `auto_merge` | Fusionar automáticamente PRs de Dependabot | No | false |
-| `auto_merge_label` | Etiqueta requerida para que un PR se auto-fusione. Dejar vacío para aplicar a todos los PRs del bot | No | "dependencies" |
-| `allow_major_versions` | Permitir actualizaciones de versiones mayores. Si es `false`, se ignoran automáticamente las actualizaciones `semver-major` | No | false |
+```yaml
+jobs:
+  dependabot-api-on-demand:
+    uses: jersonmartinez/reusable-workflows/.github/workflows/dependabot.yml@main
+    with:
+      package_ecosystem: "pip"
+      directory: "/api"
+      schedule_interval: ''   # cadena vacía -> modo bajo demanda
+      open_pull_requests_limit: 10
+```
 
-### 3. Permisos necesarios
+3) Pipeline con varios jobs (una invocación por directorio/ecosistema):
 
-Para que el workflow funcione correctamente, necesitas configurar los siguientes permisos:
+```yaml
+jobs:
+  dependabot-api:
+    uses: jersonmartinez/reusable-workflows/.github/workflows/dependabot.yml@main
+    with:
+      package_ecosystem: "pip"
+      directory: "/api"
+      schedule_interval: "weekly"
+
+  dependabot-app:
+    uses: jersonmartinez/reusable-workflows/.github/workflows/dependabot.yml@main
+    with:
+      package_ecosystem: "pip"
+      directory: "/app"
+      schedule_interval: "weekly"
+
+  dependabot-docker:
+    uses: jersonmartinez/reusable-workflows/.github/workflows/dependabot.yml@main
+    with:
+      package_ecosystem: "docker"
+      directory: "/"
+      schedule_interval: "weekly"
+
+  dependabot-actions:
+    uses: jersonmartinez/reusable-workflows/.github/workflows/dependabot.yml@main
+    with:
+      package_ecosystem: "github-actions"
+      directory: "/"
+      schedule_interval: "weekly"
+```
+
+> En modo programado, varias invocaciones consolidarán todas las entradas en un solo `.github/dependabot.yml` (idempotente).
+
+## Requisitos y permisos
+
+- Token: `GITHUB_TOKEN` con permisos mínimos recomendados:
 
 ```yaml
 permissions:
-  contents: write       # Para crear/actualizar archivos
-  pull-requests: write  # Para gestionar PRs
-  security-events: write # Necesario para ejecutar escaneos con Dependabot
+  contents: write
+  pull-requests: write
+  security-events: write
 ```
 
-### 4. Modo de ejecución bajo demanda vs programado
+- Runner: `ubuntu-latest` (o cualquier runner que incluya `gh` CLI). El reusable usa `gh api` para interactuar con la API de contenidos y el endpoint de Dependabot.
+- Herramientas en runner:
+  - `gh` (GitHub CLI) — requerido.
+  - `base64` — para codificar contenido antes de subirlo.
+  - `jq` — opcional, usado para parseo de JSON en operaciones de merge; si no está disponible, el workflow degrada operaciones y lo comunica en el summary.
 
-Este workflow puede funcionar de dos maneras:
+## Comportamiento detallado y garantías
 
-1. **Modo bajo demanda**: Si no especificas un `schedule_interval` (o lo dejas vacío), el workflow omite la creación del archivo `.github/dependabot.yml` y lanza un escaneo inmediato mediante la API de Dependabot. Esto es útil para integrarlo en pipelines de CI/CD sin habilitar una programación recurrente.
+- Upsert (merge): el workflow elimina la entrada previa para el mismo `package_ecosystem`+`directory` y añade la nueva, preservando el resto de entradas en `.github/dependabot.yml`.
+- Evitar escrituras innecesarias: si la entrada objetivo ya existe y es idéntica, la operación de PUT se omite.
+- Manejo de concurrencia: las escrituras usan reintentos y reconciliación del `sha` (evita/fija 409 Conflict cuando otro proceso actualiza el fichero al mismo tiempo).
+- Modo bajo demanda: elimina la entrada programada y llama a `POST /repos/{owner}/{repo}/dependabot/updates`. Si la API devuelve 404 o hay errores de permisos, el job no falla entero: se registra una advertencia en el summary y se continúa.
 
-2. **Modo programado**: Si especificas un `schedule_interval` (daily, weekly, monthly), el workflow genera o actualiza `.github/dependabot.yml` directamente a través de la API de GitHub. Cada invocación sustituye (o añade) la entrada correspondiente al par `package_ecosystem` + `directory`, por lo que puedes ejecutar el workflow varias veces en un mismo pipeline para cubrir diferentes rutas sin preocuparte por conflictos de git.
+## Troubleshooting (problemas comunes)
 
-> ℹ️ **Aclaración terminológica:** `.github/dependabot.yml` es el archivo de configuración oficial que GitHub espera para Dependabot dentro de cada repositorio consumidor. No tiene relación con el nombre del workflow que uses para invocar esta plantilla (por ejemplo, `dependabot-exec.yml`). Puedes llamar al workflow desde cualquier archivo de Actions; la salida seguirá escribiendo o actualizando `.github/dependabot.yml`, que es donde Dependabot lee su configuración.
+- Error de parsing en Dependabot (interval = ""): indica que existe una entrada con `interval: ""` en `.github/dependabot.yml`. Soluciones:
+  - Ejecutar el reusable con un `schedule_interval` válido (p. ej. `weekly`) para que sobrescriba la entrada.
+  - Ejecutar en modo bajo demanda (`schedule_interval: ''`) para eliminar la entrada problemática.
 
-> 📌 **Nota:** Cuando `allow_major_versions` es `false`, el archivo de configuración añade reglas para ignorar las actualizaciones `semver-major` automáticamente.
+- `gh: Not Found (HTTP 404)` al invocar `dependabot/updates`: comprobar que Dependabot Updates esté habilitado en Settings → Code security and analysis y que el token tenga permisos.
 
-> ⚠️ **Importante:** Cada invocación con `schedule_interval` actualiza (o reemplaza) la entrada que coincida con el par `package_ecosystem` + `directory`. Si necesitas modificar varias rutas, puedes invocar el workflow desde distintos jobs en un mismo run; cada uno añadirá o sustituirá únicamente su sección correspondiente.
+- Faltan utilidades en el runner (`jq`, `gh`): recomendamos `ubuntu-latest` o asegurarse de instalar `jq` si tu organización lo requiere para parseo.
 
-### 5. Solución de problemas
+## FAQ
 
-- **No se crean PRs**: Verifica que el ecosistema y directorio sean correctos.
-- **Errores de permisos**: Asegúrate de que el workflow tenga los permisos necesarios.
-- **Problemas con auto-merge**: Verifica la configuración de protección de ramas en tu repositorio.
+- ¿El workflow crea PRs por sí mismo? No. En modo programado escribe/actualiza la configuración y Dependabot (el servicio) creará PRs según el intervalo. En modo bajo demanda solicita a Dependabot un escaneo inmediato que puede generar PRs.
+- ¿Puedo invocar varias veces en paralelo? Sí. El reusable incluye lógica de merge y reintentos para minimizar conflictos; sin embargo puede haber reintentos si muchas invocaciones compiten simultáneamente.
 
-### 6. Resultado y resumen automático
+## Buenas prácticas
 
-Al finalizar, el workflow añade un resumen en la pestaña **Summary** de la ejecución con:
+- Usa `schedule_interval` sólo cuando quieras programación persistente. Para comprobaciones ad-hoc, integra el reusable con `schedule_interval: ''`.
+- Verifica permisos y que Dependabot Updates/Alerts estén habilitados en el repositorio/organización.
+- Si necesitas comportamientos especiales (prefijos de commit, etiquetas distintas, reglas de ignore adicionales), extiende el reusable o pásalos como parámetros de entrada.
 
-- Datos clave del run (repositorio, directorio, ecosistema y modo de ejecución).
-- Un estado visual (✅/❌) indicando si el job terminó correctamente o con errores.
-- El archivo evaluado o la confirmación de que se generó `.github/dependabot.yml` (incluyendo la entrada añadida).
-- Una tabla con los PRs abiertos actualmente por `app/dependabot` (si existen) indicando número, título, rama base y URL. Si no hay PRs abiertos, lo deja señalado explícitamente.
-- Un recordatorio de que, en modo programado, los PRs aparecerán cuando Dependabot procese la configuración (según el intervalo definido).
+---
 
-### 6. Ejemplos de uso
-
-#### Configuración básica para un proyecto Node.js
-
-```yaml
-uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
-with:
-  package_ecosystem: "npm"
-  directory: "/"
-  schedule_interval: "weekly"
-```
-
-#### Configuración completa para un proyecto Python con auto-aprobación
-
-```yaml
-uses: usuario/reusable-workflows/.github/workflows/dependabot-workflow.yml@main
-with:
-  package_ecosystem: "pip"
-  directory: "/"
-  schedule_interval: "daily"
-  open_pull_requests_limit: 5
-  auto_approve: true
-  auto_merge: true
-  dependency_file_path: "requirements.txt"
-  allow_major_versions: false
-```
-
-## 🧯 Solución de problemas
-
-### ❓ El workflow no crea la configuración de Dependabot
-
-Asegúrate de que el token de GitHub tenga permisos suficientes para escribir en el repositorio.
-
-### ❓ Los PRs no se aprueban automáticamente
-
-Verifica que el parámetro `auto_approve` esté configurado como `true` y que el token tenga permisos para escribir en los pull requests.
-
-### ❓ Los PRs no se fusionan automáticamente
-
-Asegúrate de que tanto `auto_approve` como `auto_merge` estén configurados como `true` y que el token tenga permisos para escribir en el contenido del repositorio.
+Si quieres, puedo aplicar una versión similar de este README al directorio raíz o añadir ejemplos adicionales (por ejemplo, script para instalar `jq` en runners personalizados). 
