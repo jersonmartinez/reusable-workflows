@@ -28,6 +28,7 @@ on:
 
 jobs:
   configure:
+    name: Configuring
     runs-on: ubuntu-latest
     permissions:
       contents: write
