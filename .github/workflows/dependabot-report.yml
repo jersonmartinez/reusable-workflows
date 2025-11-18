@@ -103,6 +103,11 @@ on:
         type: boolean
         default: true
 
+      prs_state:
+        required: false
+        type: string
+        default: 'open'
+
 jobs:
   configure:
     name: Configuring
@@ -362,6 +367,7 @@ jobs:
           WAIT_MINUTES: ${{ inputs.wait_minutes }}
           POLL_INTERVAL: ${{ inputs.poll_interval_seconds }}
           DEP_LOGINS: ${{ inputs.dependabot_logins }}
+          PRS_STATE: ${{ inputs.prs_state }}
         run: |
           cat > /tmp/detect_prs.py << 'SCRIPT_EOF'
           # Poll de PRs abiertos usando la API de GitHub vía gh CLI.
@@ -384,13 +390,9 @@ jobs:
           def list_prs_api():
             # Obtiene PRs abiertos y filtra por login de usuario
             try:
-              args = [
-                'gh','api','repos/'+repo+'/pulls',
-                '--method','GET',
-                '--field','state=open',
-                '--field','per_page=100',
-                '--paginate'
-              ]
+              state = os.getenv('PRS_STATE','open')
+              path = f"repos/{repo}/pulls?state={state}&per_page=100"
+              args = ['gh','api',path,'--method','GET']
               result = subprocess.run(args, capture_output=True, text=True)
               if result.returncode == 0 and result.stdout.strip():
                 data = json.loads(result.stdout)
@@ -983,6 +985,9 @@ jobs:
           for pr in prs:
               num = pr.get('number')
               if not num:
+                  continue
+              # Solo cerrar PRs que están abiertos
+              if (pr.get('state','') or '').lower() != 'open':
                   continue
               repo = os.getenv('GITHUB_REPOSITORY')
               labels = [ (l.get('name','') or '').lower() for l in pr.get('labels',[]) ]
