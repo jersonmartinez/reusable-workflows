@@ -3,28 +3,6 @@ name: Setup Dependabot
 on:
   workflow_call:
     inputs:
-      ecosystems:
-        required: true
-        type: string
-        description: 'JSON con configuraciones de ecosistemas'
-
-      schedule:
-        required: false
-        type: string
-        default: 'weekly'
-        description: 'Frecuencia de actualizaciones (daily, weekly, monthly)'
-
-      pr_limit:
-        required: false
-        type: number
-        default: 5
-        description: 'Máximo de PRs abiertos simultáneamente'
-
-      target_branch:
-        required: false
-        type: string
-        default: ''
-        description: 'Rama objetivo para PRs (vacío = rama predeterminada)'
 
       create_issue:
         required: false
@@ -79,7 +57,7 @@ jobs:
     name: Configuring
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       issues: write
       pull-requests: write
 
@@ -88,7 +66,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🕒 Marcar inicio
-        run: echo "RUN_STARTED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+        if: false
+        run: echo "skip"
 
       - name: 🧪 Preparar logs de depuración
         run: |
@@ -97,6 +76,7 @@ jobs:
 
       - name: 🔍 Validate Labels
         id: validate_labels
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -182,7 +162,7 @@ jobs:
           python3 /tmp/validate_labels.py
 
       - name: 🏷️ Crear labels faltantes
-        if: ${{ steps.validate_labels.outputs.has_missing == 'true' && inputs.create_missing_labels }}
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -216,6 +196,7 @@ jobs:
           done
 
       - name: 📝 Generate Dependabot Config
+        if: false
         env:
           FILTERED_ECOSYSTEMS: ${{ steps.validate_labels.outputs.filtered_ecosystems }}
         run: |
@@ -278,6 +259,7 @@ jobs:
 
       - name: 💾 Commit Changes
         id: commit
+        if: false
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -336,7 +318,8 @@ jobs:
                       'url': pr.get('html_url'),
                       'labels': pr.get('labels',[]),
                       'createdAt': pr.get('created_at',''),
-                      'headRefName': (pr.get('head',{}) or {}).get('ref','')
+                      'headRefName': (pr.get('head',{}) or {}).get('ref',''),
+                      'state': pr.get('state','')
                     })
                 return filtered
               log(f"list_prs_api non-0 returncode: {result.returncode} stderr={result.stderr.strip()}")
@@ -564,10 +547,6 @@ jobs:
         env:
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
           PRS_COUNT: ${{ steps.detect_prs.outputs.prs_count }}
-          CHANGED: ${{ steps.commit.outputs.changed }}
-          COMMIT_SHA: ${{ steps.commit.outputs.commit_sha }}
-          MISSING_COUNT: ${{ steps.validate_labels.outputs.missing_count }}
-          VALID_COUNT: ${{ steps.validate_labels.outputs.valid_count }}
           ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
@@ -576,29 +555,6 @@ jobs:
 
           repo = os.getenv('GITHUB_REPOSITORY')
           server_url = os.getenv('GITHUB_SERVER_URL', 'https://github.com')
-          changed = os.getenv('CHANGED', 'false')
-          commit_sha = os.getenv('COMMIT_SHA', '')
-          missing_count = int(os.getenv('MISSING_COUNT', '0'))
-          valid_count = int(os.getenv('VALID_COUNT', '0'))
-
-          # Cargar datos de validación
-          try:
-              with open('/tmp/validation_data.json', 'r') as f:
-                  validation_data = json.load(f)
-              missing_by_ecosystem = validation_data['missing_by_ecosystem']
-              valid_by_ecosystem = validation_data['valid_by_ecosystem']
-              existing_labels = validation_data['existing_labels']
-          except Exception as e:
-              print(f"::error::No se pudo cargar validation_data.json: {e}")
-              missing_by_ecosystem = {}
-              valid_by_ecosystem = {}
-              existing_labels = {}
-
-          # Cargar ecosistemas originales
-          try:
-              ecosystems = json.loads('''${{ inputs.ecosystems }}''')
-          except:
-              ecosystems = []
 
           # Cargar PRs
           try:
@@ -609,204 +565,74 @@ jobs:
               prs_data = []
 
           prs_count = int(os.getenv('PRS_COUNT', '0'))
+          issue_url = os.getenv('ISSUE_URL','')
+
+          def current_state(num: int):
+              try:
+                  r = os.popen(f"gh api repos/{repo}/pulls/{num}").read()
+                  data = json.loads(r)
+                  st = data.get('state','open')
+                  merged_at = data.get('merged_at')
+                  if st == 'closed' and merged_at:
+                      return 'merged'
+                  return st
+              except Exception:
+                  return 'unknown'
 
           summary = []
+          summary.append("# 🔄 Pull Requests de Dependabot\n\n")
+          if issue_url:
+              summary.append(f"> 🧾 <b>Reporte consolidado:</b> <a href='{issue_url}'>{issue_url}</a>\n\n")
 
-          # Header
-          summary.append("# 🤖 Configuración de Dependabot\n\n")
-
-          # Estado
-          if changed == 'true' and commit_sha:
-              commit_url = f"{server_url}/{repo}/commit/{commit_sha}"
-              summary.append(f"✅ **Configuración actualizada** • Commit: [📝 `{commit_sha[:7]}`]({commit_url})\n\n")
-          else:
-              summary.append("ℹ️ **Sin cambios** • La configuración está actualizada\n\n")
-
-          # Resumen ejecutivo
-          total_ecosystems = len(ecosystems)
-          total_labels = valid_count + missing_count
-
-          summary.append("## 📊 Resumen Ejecutivo\n\n")
-          summary.append("| 🔧 Ecosistemas | 🏷️ Labels Válidos | ⚠️ Labels Faltantes | 🔄 PRs Activos |\n")
-          summary.append("|:--------------:|:-----------------:|:-------------------:|:--------------:|\n")
-          summary.append(f"| **{total_ecosystems}** | **{valid_count}** | **{missing_count}** | **{prs_count}** |\n\n")
-
-          # Tabla de ecosistemas
-          summary.append("<details open>\n")
-          summary.append("<summary><h2>📦 Ecosistemas Configurados</h2></summary>\n\n")
-          summary.append("<table>\n")
-          summary.append("<colgroup>\n")
-          summary.append("<col style='width:12%'>\n")
-          summary.append("<col style='width:12%'>\n")
-          summary.append("<col style='width:10%'>\n")
-          summary.append("<col style='width:8%'>\n")
-          summary.append("<col style='width:28%'>\n")
-          summary.append("<col style='width:30%'>\n")
-          summary.append("</colgroup>\n")
-          summary.append("<thead>\n")
-          summary.append("<tr>\n")
-          summary.append("<th>Ecosistema</th>\n")
-          summary.append("<th>Directorio</th>\n")
-          summary.append("<th>Prefijo</th>\n")
-          summary.append("<th>PR Limit</th>\n")
-          summary.append("<th>Labels Válidos</th>\n")
-          summary.append("<th>Labels Faltantes</th>\n")
-          summary.append("</tr>\n")
-          summary.append("</thead>\n")
-          summary.append("<tbody>\n")
-
-          for eco in ecosystems:
-              eco_key = f"{eco['ecosystem']}|{eco['directory']}"
-              
-              valid_labels = valid_by_ecosystem.get(eco_key, [])
-              missing_labels = missing_by_ecosystem.get(eco_key, [])
-
-              valid_badges = []
-              for label in valid_labels:
-                  label_info = existing_labels.get(label.lower(), {})
-                  color = label_info.get('color', '0366d6')
-                  valid_badges.append(
-                      f"<img src='https://img.shields.io/badge/{label.replace('-', '--')}-{color}?style=flat-square' alt='{label}' style='margin:2px'>"
-                  )
-
-              missing_badges = [
-                  f'<code style="white-space:nowrap">{label}</code>' 
-                  for label in missing_labels
-              ]
-
-              summary.append("<tr>\n")
-              summary.append(f"<td><code>{eco['ecosystem']}</code></td>\n")
-              summary.append(f"<td><code>{eco['directory']}</code></td>\n")
-              summary.append(f"<td><code>{eco.get('prefix', '-')}</code></td>\n")
-              summary.append(f"<td>{eco.get('pr_limit', '${{ inputs.pr_limit }}')}</td>\n")
-              summary.append(f"<td>{' '.join(valid_badges) if valid_badges else '➖'}</td>\n")
-              summary.append(f"<td>{' '.join(missing_badges) if missing_badges else '✅'}</td>\n")
-              summary.append("</tr>\n")
-
-          summary.append("</tbody>\n")
-          summary.append("</table>\n\n")
-
-          if missing_count > 0:
-              labels_url = f"{server_url}/{repo}/labels"
-              summary.append(f"> ⚠️ **Acción Recomendada:** Algunos labels no existen. ")
-              summary.append(f"<a href='{labels_url}'>🔧 <b>Crear labels faltantes</b></a> o ajustar la configuración.\n\n")
-
-          summary.append("</details>\n\n")
-
-          # PRs de Dependabot
           if prs_data and len(prs_data) > 0:
-              summary.append("<details>\n")
-              summary.append(f"<summary><h2>🔄 Pull Requests de Dependabot ({min(prs_count, 15)})</h2></summary>\n\n")
+              show_n = min(prs_count, 30)
+              summary.append(f"Mostrando {show_n} de {prs_count} PRs\n\n")
 
               summary.append("<table>\n")
               summary.append("<thead>\n")
               summary.append("<tr>\n")
-              summary.append("<th>PR</th>\n")
-              summary.append("<th>Título</th>\n")
-              summary.append("<th>Labels</th>\n")
-              summary.append("<th>Creado</th>\n")
+              summary.append("<th>PR</th><th>Título</th><th>Labels</th><th>Creado</th><th>Estado</th>\n")
               summary.append("</tr>\n")
               summary.append("</thead>\n")
               summary.append("<tbody>\n")
 
-              for pr in prs_data[:15]:
+              for pr in prs_data[:show_n]:
                   pr_number = pr.get('number', 'N/A')
                   pr_url = pr.get('url', '#')
                   pr_title = pr.get('title', 'Sin título')
                   pr_labels = ', '.join([l.get('name', '') for l in pr.get('labels', [])])
                   pr_created = pr.get('createdAt', '')
-                  
                   try:
                       pr_date = datetime.fromisoformat(pr_created.replace('Z', '+00:00')).strftime('%Y-%m-%d')
                   except:
                       pr_date = 'N/A'
+                  state_now = current_state(pr_number)
 
                   summary.append("<tr>\n")
                   summary.append(f"<td><a href='{pr_url}'><b>#{pr_number}</b></a></td>\n")
                   summary.append(f"<td>{pr_title}</td>\n")
                   summary.append(f"<td>{pr_labels if pr_labels else '➖'}</td>\n")
                   summary.append(f"<td>{pr_date}</td>\n")
+                  summary.append(f"<td><code>{state_now}</code></td>\n")
                   summary.append("</tr>\n")
 
               summary.append("</tbody>\n")
               summary.append("</table>\n\n")
 
-              if prs_count > 15:
-                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Adependabot"
+              if prs_count > show_n:
+                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Adependabot"
                   summary.append(f"> <a href='{prs_url}'>📋 <b>Ver todos los PRs ({prs_count})</b></a>\n\n")
-
-              summary.append("</details>\n\n")
           else:
-              summary.append("<details>\n")
-              summary.append("<summary><h2>🔄 Pull Requests de Dependabot</h2></summary>\n\n")
               summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
-              summary.append("</details>\n\n")
 
-          issue_url = os.getenv('ISSUE_URL','')
-          if issue_url:
-              summary.append(f"> 🧾 <b>Issue de reporte:</b> <a href='{issue_url}'>{issue_url}</a>\n\n")
-
-          # Enlaces útiles
-          summary.append("<details>\n")
-          summary.append("<summary><h2>🔗 Enlaces Útiles</h2></summary>\n\n")
-
-          config_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
-          summary.append(f"- 📝 <a href='{config_url}'><b>Ver Configuración</b></a> — Archivo dependabot.yml generado\n")
-
-          security_url = f"{server_url}/{repo}/settings/security_analysis"
-          summary.append(f"- 🛡️ <a href='{security_url}'><b>Security Settings</b></a> — Configurar análisis de seguridad\n")
-
-          insights_url = f"{server_url}/{repo}/network/dependencies"
-          summary.append(f"- 📊 <a href='{insights_url}'><b>Dependency Graph</b></a> — Visualizar dependencias\n")
-
-          labels_url = f"{server_url}/{repo}/labels"
-          summary.append(f"- 🏷️ <a href='{labels_url}'><b>Gestionar Labels</b></a> — Crear o editar labels\n")
-
-          prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Adependabot"
-          summary.append(f"- 🔄 <a href='{prs_url}'><b>PRs de Dependabot</b></a> — Ver Pull Requests activos\n")
-
-          advisories_url = f"{server_url}/{repo}/security/dependabot"
-          summary.append(f"- 🚨 <a href='{advisories_url}'><b>Security Alerts</b></a> — Revisar alertas de seguridad\n\n")
-
-          summary.append("</details>\n\n")
-
-          # Información del workflow
-          summary.append("<details>\n")
-          summary.append("<summary><b>📚 Sobre el Workflow Reusable</b></summary>\n\n")
-
-          summary.append("#### ✅ Características\n\n")
-          summary.append("- 🔍 Validación automática de labels\n")
-          summary.append("- 🛡️ Filtrado automático de labels inválidos\n")
-          summary.append("- 📊 Summary con diseño consolidado y responsive\n")
-          summary.append("- 🏷️ Badges con colores del repositorio\n")
-          summary.append("- 🔗 Enlaces directos a recursos\n")
-          summary.append("- 🔄 Detección de PRs existentes\n")
-          summary.append("- 📝 Configuración personalizable\n")
-          summary.append("- 🎯 Rama objetivo configurable\n\n")
-
-          summary.append("#### 🔮 Mejoras Futuras\n\n")
-          summary.append("- 🔔 Notificaciones a Slack/Discord\n")
-          summary.append("- 📈 Matriz de compatibilidad\n")
-          summary.append("- 🛡️ Integración con Security Advisories\n")
-          summary.append("- 📊 Dashboard centralizado\n")
-          summary.append("- 🔍 Análisis predictivo de impacto\n\n")
-
-          summary.append("</details>\n\n")
-
-          # Footer
           timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
-          workflow_url = f"{server_url}/jersonmartinez/reusable-workflows"
-          summary.append(f"<sub>🤖 Generado por <a href='{workflow_url}'><b>Reusable Workflows</b></a> • {timestamp}</sub>\n")
+          summary.append(f"<sub>{timestamp}</sub>\n")
 
-          # Escribir summary
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'w') as f:
               f.write(''.join(summary))
 
           print("✅ Summary generado correctamente")
           print(f"📊 PRs detectados: {prs_count}")
-          print(f"📦 Ecosistemas: {len(ecosystems)}")
-          print(f"✅ Labels válidos: {valid_count}")
-          print(f"⚠️ Labels omitidos: {missing_count}")
           SCRIPT_EOF
 
           python3 /tmp/generate_summary.py
