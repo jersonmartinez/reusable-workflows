@@ -8,119 +8,100 @@ on:
         required: false
         type: boolean
         default: true
-        description: 'Crear issue de reporte de hallazgos'
 
       issue_title:
         required: false
         type: string
         default: 'Reporte Dependabot: ${date}'
-        description: 'Título del issue; use ${date} para fecha UTC'
 
       issue_labels:
         required: false
         type: string
         default: 'dependabot-report'
-        description: 'Labels para el issue, separados por coma'
 
       close_dependabot_prs:
         required: false
         type: boolean
         default: true
-        description: 'Cerrar los PRs de Dependabot tras crear el issue'
 
       wait_minutes:
         required: false
         type: number
         default: 5
-        description: 'Minutos máximos para esperar PRs nuevos de Dependabot'
 
       create_missing_labels:
         required: false
         type: boolean
         default: false
-        description: 'Crear labels faltantes antes de generar configuración'
 
       create_issue_if_empty:
         required: false
         type: boolean
         default: true
-        description: 'Crear issue aunque no existan PRs detectados'
 
       upload_debug_artifact:
         required: false
         type: boolean
         default: true
-        description: 'Subir docs/output.txt como artifact de depuración'
 
       trigger_dependabot_now:
         required: false
         type: boolean
         default: false
-        description: 'Forzar ejecución editando .github/dependabot.yml (cambio sin impacto)'
 
       dependabot_config_path:
         required: false
         type: string
         default: '.github/dependabot.yml'
-        description: 'Ruta del archivo dependabot.yml existente'
 
       dependabot_logins:
         required: false
         type: string
         default: 'dependabot,dependabot[bot],app/dependabot'
-        description: 'Lista de logins (coma) que se consideran Dependabot'
 
       poll_interval_seconds:
         required: false
         type: number
         default: 30
-        description: 'Intervalo de polling en segundos'
 
       dry_run_close:
         required: false
         type: boolean
         default: false
-        description: 'No cerrar PRs, solo reportar'
 
       skip_close_labels:
         required: false
         type: string
         default: ''
-        description: 'Labels (coma) que evitan cierre del PR'
 
       max_prs_in_summary:
         required: false
         type: number
         default: 30
-        description: 'Máximo de PRs listados en el summary'
 
-      # Exporta reporte en PDF como artifact del run
       generate_pdf_report:
         required: false
         type: boolean
         default: false
-        description: 'Generar y subir PDF del reporte de PRs'
 
-      # Nombre del archivo PDF a generar
       pdf_report_name:
         required: false
         type: string
         default: 'dependabot-report.pdf'
-        description: 'Nombre del archivo PDF generado'
 
-      # Exporta reporte en HTML navegable como artifact
       generate_html_report:
         required: false
         type: boolean
         default: true
-        description: 'Generar y subir HTML del reporte de PRs'
 
-      # Nombre del archivo HTML a generar
       html_report_name:
         required: false
         type: string
         default: 'dependabot-report.html'
-        description: 'Nombre del archivo HTML generado'
+      fast_summary:
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   configure:
@@ -1303,8 +1284,3 @@ jobs:
         with:
           name: dependabot-report-debug
           path: docs/output.txt
-      fast_summary:
-        required: false
-        type: boolean
-        default: true
-        description: 'Acelerar summary evitando llamadas por-PR a la API'
