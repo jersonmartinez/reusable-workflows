@@ -195,6 +195,26 @@ jobs:
             echo "Creado label: $l"
           done
 
+      - name: 🏷️ Crear labels del Issue faltantes
+        if: ${{ inputs.issue_labels != '' && inputs.create_missing_labels }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_LABELS: ${{ inputs.issue_labels }}
+        run: |
+          REPO="$GITHUB_REPOSITORY"
+          EXISTING=$(gh label list --repo "$REPO" --json name --jq '.[].name')
+          declare -A MAP
+          for n in $EXISTING; do MAP[$n]=1; done
+          IFS=',' read -ra LBS <<< "$ISSUE_LABELS"
+          for l in "${LBS[@]}"; do
+            NAME=$(echo "$l" | xargs)
+            [ -z "$NAME" ] && continue
+            if [ -z "${MAP[$NAME]}" ]; then
+              gh label create "$NAME" --repo "$REPO" --color 6f42c1 --description "Auto-creado para reporte" || true
+              echo "Creado label de Issue: $NAME"
+            fi
+          done
+
       - name: 📝 Generate Dependabot Config
         env:
           FILTERED_ECOSYSTEMS: ${{ steps.validate_labels.outputs.filtered_ecosystems }}
@@ -406,63 +426,92 @@ jobs:
               return 'other'
           
           def build_body(prs, date, repo):
-              lines = []
-              lines.append(f"### Reporte de actualizaciones ({date})\n")
-              if prs:
-                  agg = {'major':0,'minor':0,'patch':0,'other':0}
-                  lines.append("\n| PR | Paquete | Desde | Hasta | Dir | Labels |\n")
-                  lines.append("|:--:|:-------|:-----:|:-----:|:---:|:------:|\n")
-                  for pr in prs:
-                      num = pr.get('number')
-                      url = pr.get('url')
-                      title_pr = pr.get('title','')
-                      meta = parse_title(title_pr) or {'name':'—','from':'—','to':'—','dir':''}
-                      labels_pr = ', '.join([l.get('name','') for l in pr.get('labels',[])]) or '—'
-                      lines.append(f"| [#{num}]({url}) | {meta['name']} | {meta['from']} | {meta['to']} | {meta['dir']} | {labels_pr} |\n")
-                      if meta['from'] != '—' and meta['to'] != '—':
-                          agg[update_type(meta['from'], meta['to'])] += 1
-                  lines.append("\n#### Resumen por tipo\n")
-                  lines.append(f"- Major: {agg['major']}\n- Minor: {agg['minor']}\n- Patch: {agg['patch']}\n- Other: {agg['other']}\n")
-                  lines.append("\n#### Detalles\n")
-                  for pr in prs:
-                      num = pr.get('number')
-                      url = pr.get('url')
-                      title_pr = pr.get('title','')
-                      body = pr_details(num, repo)
-                      snippet = (body or '').strip()
-                      if len(snippet) > 1200:
-                          snippet = snippet[:1200] + '…'
-                      lines.append(f"- [#{num}]({url}) {title_pr}\n")
-                      if snippet:
-                          lines.append(f"  \n  {snippet}\n")
-              else:
-                  lines.append("\nNo se encontraron PRs abiertos de Dependabot en este momento.\n")
-              return ''.join(lines)
+            lines = []
+            lines.append(f"### Reporte de actualizaciones ({date})\n")
+            if prs:
+                agg = {'major':0,'minor':0,'patch':0,'other':0}
+                lines.append("\n| PR | Paquete | Desde | Hasta | Dir | Labels |\n")
+                lines.append("|:--:|:-------|:-----:|:-----:|:---:|:------:|\n")
+                for pr in prs:
+                    num = pr.get('number')
+                    url = pr.get('url')
+                    title_pr = pr.get('title','')
+                    meta = parse_title(title_pr) or {'name':'—','from':'—','to':'—','dir':''}
+                    labels_pr = ', '.join([l.get('name','') for l in pr.get('labels',[])]) or '—'
+                    lines.append(f"| [#{num}]({url}) | {meta['name']} | {meta['from']} | {meta['to']} | {meta['dir']} | {labels_pr} |\n")
+                    if meta['from'] != '—' and meta['to'] != '—':
+                        agg[update_type(meta['from'], meta['to'])] += 1
+                lines.append("\n#### Resumen por tipo\n")
+                lines.append(f"- Major: {agg['major']}\n- Minor: {agg['minor']}\n- Patch: {agg['patch']}\n- Other: {agg['other']}\n")
+                lines.append("\n#### Detalles\n")
+                for pr in prs:
+                    num = pr.get('number')
+                    url = pr.get('url')
+                    title_pr = pr.get('title','')
+                    body = pr_details(num, repo)
+                    snippet = (body or '').strip()
+                    if len(snippet) > 1200:
+                        snippet = snippet[:1200] + '…'
+                    lines.append(f"- [#{num}]({url}) {title_pr}\n")
+                    if snippet:
+                        lines.append(f"  \n  {snippet}\n")
+            else:
+                lines.append("\nNo se encontraron PRs abiertos de Dependabot en este momento.\n")
+            return ''.join(lines)
+
+          def find_existing_issue(title, repo):
+              try:
+                  r = subprocess.run(['gh','issue','list','--repo',repo,'--state','open','--limit','100','--json','number,title,url'], capture_output=True, text=True)
+                  if r.returncode == 0 and r.stdout.strip():
+                      items = json.loads(r.stdout)
+                      for it in items:
+                          if it.get('title','') == title:
+                              return it.get('url','')
+                  return ''
+              except Exception:
+                  return ''
           
           def main():
-              prs_raw = os.getenv('PRS_DATA','[]')
-              prs = json.loads(prs_raw) if prs_raw.strip() else []
-              date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-              title_tpl = os.getenv('ISSUE_TITLE_TPL','Reporte Dependabot: ${date}')
-              title = title_tpl.replace('${date}', date)
-              labels = [l.strip() for l in os.getenv('ISSUE_LABELS','').split(',') if l.strip()]
-              repo = os.getenv('GITHUB_REPOSITORY')
-              body = build_body(prs, date, repo)
-              cmd = ['gh','issue','create','--repo',repo,'--title',title,'--body',body]
-              for l in labels:
-                  cmd += ['--label', l]
-              result = subprocess.run(cmd, capture_output=True, text=True)
-              url = ''
-              if result.returncode == 0:
-                  for line in result.stdout.splitlines():
-                      if line.strip().startswith('https://'):
-                          url = line.strip()
-                          break
-              with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-                  f.write(f"issue_url={url}\n")
-              log(f"Issue title: {title}")
-              log(f"Issue created: {url if url else 'N/A'}")
-              print(f"🧾 Issue creado: {url if url else 'N/A'}")
+            prs_raw = os.getenv('PRS_DATA','[]')
+            prs = json.loads(prs_raw) if prs_raw.strip() else []
+            date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            title_tpl = os.getenv('ISSUE_TITLE_TPL','Reporte Dependabot: ${date}')
+            title = title_tpl.replace('${date}', date)
+            labels = [l.strip() for l in os.getenv('ISSUE_LABELS','').split(',') if l.strip()]
+            repo = os.getenv('GITHUB_REPOSITORY')
+            existing = find_existing_issue(title, repo)
+            if existing:
+                with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+                    f.write(f"issue_url={existing}\n")
+                log(f"Issue existente reutilizado: {existing}")
+                print(f"🧾 Issue reutilizado: {existing}")
+                return
+            body = build_body(prs, date, repo)
+            cmd = ['gh','issue','create','--repo',repo,'--title',title,'--body',body]
+            for l in labels:
+                cmd += ['--label', l]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            url = ''
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if line.strip().startswith('https://'):
+                        url = line.strip()
+                        break
+            else:
+                log(f"Fallo al crear issue con labels. stderr: {result.stderr.strip()}")
+                result2 = subprocess.run(['gh','issue','create','--repo',repo,'--title',title,'--body',body], capture_output=True, text=True)
+                if result2.returncode == 0:
+                    for line in result2.stdout.splitlines():
+                        if line.strip().startswith('https://'):
+                            url = line.strip()
+                            break
+                else:
+                    log(f"Intento sin labels también falló. stderr: {result2.stderr.strip()}")
+            with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+                f.write(f"issue_url={url}\n")
+            log(f"Issue title: {title}")
+            log(f"Issue created: {url if url else 'N/A'}")
+            print(f"🧾 Issue creado: {url if url else 'N/A'}")
           
           if __name__ == '__main__':
               main()
@@ -475,6 +524,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
+          ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
         run: |
           python3 - << 'PY'
           import json, os, subprocess
@@ -482,18 +532,29 @@ jobs:
           prs = json.loads(os.getenv('PRS_DATA','[]'))
           closed = 0
           debug_path = Path('docs')/ 'output.txt'
+          issue_url = os.getenv('ISSUE_URL','')
           for pr in prs:
               num = pr.get('number')
               if not num:
                   continue
               repo = os.getenv('GITHUB_REPOSITORY')
-              r = subprocess.run(['gh','pr','close',str(num),'--repo',repo,'--delete-branch','--comment','Cerrado por reporte consolidado de Dependabot'], capture_output=True, text=True)
+              comment = 'Cerrado por reporte consolidado de Dependabot'
+              if issue_url:
+                  comment += f" — Reporte: {issue_url}"
+              r = subprocess.run(['gh','pr','close',str(num),'--repo',repo,'--delete-branch','--comment',comment], capture_output=True, text=True)
               if r.returncode == 0:
                   closed += 1
                   try:
                       debug_path.parent.mkdir(parents=True, exist_ok=True)
                       with open(debug_path,'a') as df:
                           df.write(f"Closed PR #{num}\n")
+                  except Exception:
+                      pass
+              else:
+                  try:
+                      debug_path.parent.mkdir(parents=True, exist_ok=True)
+                      with open(debug_path,'a') as df:
+                          df.write(f"Failed to close PR #{num}: {r.stderr.strip()}\n")
                   except Exception:
                       pass
           print(f"🔒 PRs cerrados: {closed}")
