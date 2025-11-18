@@ -671,15 +671,15 @@ jobs:
               summary.append("</table>\n\n")
 
               if prs_count > 15:
-                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot"
+                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Adependabot"
                   summary.append(f"> <a href='{prs_url}'>📋 <b>Ver todos los PRs ({prs_count})</b></a>\n\n")
 
               summary.append("</details>\n\n")
           else:
-          summary.append("<details>\n")
-          summary.append("<summary><h2>🔄 Pull Requests de Dependabot</h2></summary>\n\n")
-          summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
-          summary.append("</details>\n\n")
+              summary.append("<details>\n")
+              summary.append("<summary><h2>🔄 Pull Requests de Dependabot</h2></summary>\n\n")
+              summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
+              summary.append("</details>\n\n")
 
           issue_url = os.getenv('ISSUE_URL','')
           if issue_url:
