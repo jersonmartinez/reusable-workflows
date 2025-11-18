@@ -52,12 +52,24 @@ on:
         default: true
         description: 'Subir docs/output.txt como artifact de depuración'
 
+      trigger_dependabot_now:
+        required: false
+        type: boolean
+        default: false
+        description: 'Forzar ejecución editando .github/dependabot.yml (cambio sin impacto)'
+
+      dependabot_config_path:
+        required: false
+        type: string
+        default: '.github/dependabot.yml'
+        description: 'Ruta del archivo dependabot.yml existente'
+
 jobs:
   configure:
     name: Configuring
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       issues: write
       pull-requests: write
 
@@ -73,6 +85,30 @@ jobs:
         run: |
           mkdir -p docs
           printf "[START] Dependabot report debug at %s\n" "$(date -u +'%Y-%m-%d %H:%M:%SZ')" > docs/output.txt
+
+      - name: ⚡ Trigger Dependabot (opcional)
+        if: ${{ inputs.trigger_dependabot_now }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CFG_PATH: ${{ inputs.dependabot_config_path }}
+        run: |
+          set -e
+          if [ ! -f "$CFG_PATH" ]; then
+            echo "::warning::No existe $CFG_PATH. No se puede forzar ejecución"
+            exit 0
+          fi
+          TS=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          echo "# trigger: $TS" >> "$CFG_PATH"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$CFG_PATH"
+          if git diff --cached --quiet; then
+            echo "Sin cambios en $CFG_PATH"
+          else
+            git commit -m "chore(dependabot): trigger run at $TS"
+            git push || echo "::warning::No se pudo pushear cambios (verificar permisos)"
+            echo "Triggered Dependabot via config change at $TS" >> docs/output.txt
+          fi
 
       - name: 🔍 Validate Labels
         id: validate_labels
@@ -548,6 +584,7 @@ jobs:
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
           PRS_COUNT: ${{ steps.detect_prs.outputs.prs_count }}
           ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
+          TRIGGER_DEPENDABOT_NOW: ${{ inputs.trigger_dependabot_now }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
           import json, os
@@ -583,6 +620,10 @@ jobs:
           summary.append("# 🔄 Pull Requests de Dependabot\n\n")
           if issue_url:
               summary.append(f"> 🧾 <b>Reporte consolidado:</b> <a href='{issue_url}'>{issue_url}</a>\n\n")
+
+          if os.getenv('TRIGGER_DEPENDABOT_NOW','false') == 'true':
+              cfg_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
+              summary.append(f"> ⚡ <b>Trigger enviado</b>: se editó <a href='{cfg_url}'>dependabot.yml</a> para forzar un job de actualización.\n\n")
 
           if prs_data and len(prs_data) > 0:
               show_n = min(prs_count, 30)
@@ -624,6 +665,15 @@ jobs:
                   summary.append(f"> <a href='{prs_url}'>📋 <b>Ver todos los PRs ({prs_count})</b></a>\n\n")
           else:
               summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
+
+          summary.append("<details>\n")
+          summary.append("<summary><h2>🔗 Cómo activar manualmente</h2></summary>\n\n")
+          dep_graph = f"{server_url}/{repo}/network/dependencies"
+          prs_link = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Adependabot"
+          summary.append("1) Abrir <b>Insights → Dependency graph → Dependabot</b>\n")
+          summary.append(f"2) En la sección <b>Recent update jobs</b>, pulsa <b>Check for updates</b> • <a href='{dep_graph}'>Acceder</a>\n")
+          summary.append(f"3) Revisa los nuevos PRs: <a href='{prs_link}'>Listado de PRs de Dependabot</a>\n\n")
+          summary.append("</details>\n\n")
 
           timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
           summary.append(f"<sub>{timestamp}</sub>\n")
