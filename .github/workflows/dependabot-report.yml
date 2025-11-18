@@ -64,10 +64,72 @@ on:
         default: '.github/dependabot.yml'
         description: 'Ruta del archivo dependabot.yml existente'
 
+      dependabot_logins:
+        required: false
+        type: string
+        default: 'dependabot,dependabot[bot],app/dependabot'
+        description: 'Lista de logins (coma) que se consideran Dependabot'
+
+      poll_interval_seconds:
+        required: false
+        type: number
+        default: 30
+        description: 'Intervalo de polling en segundos'
+
+      dry_run_close:
+        required: false
+        type: boolean
+        default: false
+        description: 'No cerrar PRs, solo reportar'
+
+      skip_close_labels:
+        required: false
+        type: string
+        default: ''
+        description: 'Labels (coma) que evitan cierre del PR'
+
+      max_prs_in_summary:
+        required: false
+        type: number
+        default: 30
+        description: 'Máximo de PRs listados en el summary'
+
+      # Exporta reporte en PDF como artifact del run
+      generate_pdf_report:
+        required: false
+        type: boolean
+        default: true
+        description: 'Generar y subir PDF del reporte de PRs'
+
+      # Nombre del archivo PDF a generar
+      pdf_report_name:
+        required: false
+        type: string
+        default: 'dependabot-report.pdf'
+        description: 'Nombre del archivo PDF generado'
+
+      # Exporta reporte en HTML navegable como artifact
+      generate_html_report:
+        required: false
+        type: boolean
+        default: true
+        description: 'Generar y subir HTML del reporte de PRs'
+
+      # Nombre del archivo HTML a generar
+      html_report_name:
+        required: false
+        type: string
+        default: 'dependabot-report.html'
+        description: 'Nombre del archivo HTML generado'
+
 jobs:
   configure:
     name: Configuring
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: dependabot-report
+      cancel-in-progress: true
     permissions:
       contents: write
       issues: write
@@ -317,13 +379,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WAIT_MINUTES: ${{ inputs.wait_minutes }}
+          POLL_INTERVAL: ${{ inputs.poll_interval_seconds }}
+          DEP_LOGINS: ${{ inputs.dependabot_logins }}
         run: |
           cat > /tmp/detect_prs.py << 'SCRIPT_EOF'
+          # Poll de PRs abiertos usando la API de GitHub vía gh CLI.
+          # Filtra por autores de Dependabot (varios formatos) y escribe logs de depuración.
           import json, os, subprocess, time
           
           wait_minutes = int(os.getenv('WAIT_MINUTES', '10'))
+          poll_interval = int(os.getenv('POLL_INTERVAL', '30'))
           repo = os.getenv('GITHUB_REPOSITORY')
           debug_path = os.path.join('docs','output.txt')
+          dep_logins = [s.strip() for s in os.getenv('DEP_LOGINS','dependabot,dependabot[bot],app/dependabot').split(',') if s.strip()]
           
           def log(msg):
               try:
@@ -333,6 +401,7 @@ jobs:
                   pass
           
           def list_prs_api():
+            # Obtiene PRs abiertos y filtra por login de usuario
             try:
               args = [
                 'gh','api','repos/'+repo+'/pulls',
@@ -347,7 +416,7 @@ jobs:
                 filtered = []
                 for pr in data:
                   login = (pr.get('user',{}) or {}).get('login','')
-                  if login in ('dependabot','dependabot[bot]','app/dependabot'):
+                  if login in dep_logins:
                     filtered.append({
                       'number': pr.get('number'),
                       'title': pr.get('title'),
@@ -372,12 +441,13 @@ jobs:
           
           deadline = time.time() + wait_minutes*60
           while len(prs) == 0 and time.time() < deadline:
-              time.sleep(30)
+              time.sleep(poll_interval)
               prs = list_prs_api()
               log(f"Polling... PRs count: {len(prs)}")
           
           # Export outputs
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              # Exporta resultados para usar en pasos posteriores
               f.write('prs_data<<EOF\n')
               f.write(json.dumps(prs))
               f.write('\nEOF\n')
@@ -396,8 +466,12 @@ jobs:
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
           ISSUE_TITLE_TPL: ${{ inputs.issue_title }}
           ISSUE_LABELS: ${{ inputs.issue_labels }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
         run: |
           cat > /tmp/create_issue.py << 'SCRIPT_EOF'
+          # Construye el cuerpo del Issue con tabla resumen y detalles.
+          # Reutiliza el Issue si ya existe con el mismo título.
           import json, os, re, subprocess
           from datetime import datetime, timezone
           
@@ -411,6 +485,7 @@ jobs:
                   pass
           
           def pr_details(num, repo):
+              # Recupera el cuerpo del PR para incluir un snippet en el Issue
               try:
                   r = subprocess.run(['gh','pr','view',str(num),'--repo',repo,'--json','body'], capture_output=True, text=True)
                   if r.returncode == 0:
@@ -421,12 +496,14 @@ jobs:
                   return ''
           
           def parse_title(t):
+              # Extrae paquete, versiones y directorio del título típico de Dependabot
               m = re.search(r"bump\s+([^\s]+)\s+from\s+([^\s]+)\s+to\s+([^\s]+)(?:\s+in\s+(.+))?", t, re.IGNORECASE)
               if m:
                   return {'name': m.group(1), 'from': m.group(2), 'to': m.group(3), 'dir': m.group(4) or ''}
               return None
           
           def semver_tuple(s):
+              # Convierte versión a tupla (major, minor, patch)
               parts = re.findall(r"\d+", s)
               nums = [int(x) for x in parts[:3]]
               while len(nums) < 3:
@@ -434,6 +511,7 @@ jobs:
               return tuple(nums)
           
           def update_type(f, t):
+              # Determina tipo de actualización por comparación semántica
               fM,fm,fp = semver_tuple(f)
               tM,tm,tp = semver_tuple(t)
               if tM != fM:
@@ -445,7 +523,12 @@ jobs:
               return 'other'
           
           def build_body(prs, date, repo):
+            # Construye el contenido Markdown detallado del Issue
             lines = []
+            run_id = os.getenv('RUN_ID','')
+            server_url = os.getenv('SERVER_URL','https://github.com')
+            if run_id:
+                lines.append(f"**Descargar reportes (PDF/HTML):** {server_url}/{repo}/actions/runs/{run_id}\n\n")
             lines.append(f"### Reporte de actualizaciones ({date})\n")
             if prs:
                 agg = {'major':0,'minor':0,'patch':0,'other':0}
@@ -479,6 +562,7 @@ jobs:
             return ''.join(lines)
 
           def find_existing_issue(title, repo):
+              # Busca un Issue abierto con título idéntico para evitar duplicados
               try:
                   r = subprocess.run(['gh','issue','list','--repo',repo,'--state','open','--limit','100','--json','number,title,url'], capture_output=True, text=True)
                   if r.returncode == 0 and r.stdout.strip():
@@ -491,6 +575,7 @@ jobs:
                   return ''
           
           def main():
+            # Orquesta la creación o reutilización del Issue
             prs_raw = os.getenv('PRS_DATA','[]')
             prs = json.loads(prs_raw) if prs_raw.strip() else []
             date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -538,12 +623,359 @@ jobs:
           
           python3 /tmp/create_issue.py
 
+      - name: 📄 Generar PDF del reporte
+        if: ${{ inputs.generate_pdf_report }}
+        env:
+          PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
+          PDF_PATH: docs/${{ inputs.pdf_report_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - << 'PY'
+          # Genera un PDF con índice y métricas por tipo, directorio y ecosistema
+          import json, os, subprocess, sys
+          from datetime import datetime, timezone
+          try:
+              subprocess.check_call([sys.executable,'-m','pip','install','reportlab'])
+          except Exception:
+              pass
+          from reportlab.lib.pagesizes import A4
+          from reportlab.lib import colors
+          from reportlab.lib.styles import getSampleStyleSheet
+          from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+          try:
+              prs = json.loads(os.getenv('PRS_DATA','[]'))
+          except Exception:
+              prs = []
+          pdf_path = os.getenv('PDF_PATH','docs/dependabot-report.pdf')
+          os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+          styles = getSampleStyleSheet()
+          doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+          flow = []
+          title = Paragraph('Reporte de Dependabot', styles['Title'])
+          flow.append(title)
+          flow.append(Spacer(1,12))
+          ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+          flow.append(Paragraph(f'Generado: {ts}', styles['Normal']))
+          flow.append(Spacer(1,12))
+
+          import re
+          def parse_title(t):
+              # Extrae metadatos del título típico de Dependabot
+              m = re.search(r"bump\s+([^\s]+)\s+from\s+([^\s]+)\s+to\s+([^\s]+)(?:\s+in\s+(.+))?", t, re.IGNORECASE)
+              if m:
+                  return {'name': m.group(1), 'from': m.group(2), 'to': m.group(3), 'dir': m.group(4) or ''}
+              return {'name':'—','from':'','to':'','dir':''}
+          def semver_tuple(s):
+              nums = [int(x) for x in re.findall(r"\d+", s)[:3]]
+              while len(nums) < 3:
+                  nums.append(0)
+              return tuple(nums)
+          def update_type(f, t):
+              # Determina el tipo de actualización (major/minor/patch/other)
+              if not f or not t:
+                  return 'other'
+              fM,fm,fp = semver_tuple(f)
+              tM,tm,tp = semver_tuple(t)
+              if tM != fM:
+                  return 'major'
+              if tm != fm:
+                  return 'minor'
+              if tp != fp:
+                  return 'patch'
+              return 'other'
+          def directory_of(pr):
+              # Detecta directorio desde el título o la rama de Dependabot
+              meta = parse_title(pr.get('title',''))
+              if meta.get('dir'):
+                  return meta['dir']
+              ref = pr.get('headRefName','')
+              if '/' in ref:
+                  parts = ref.split('/')
+                  try:
+                      idx = parts.index('dependabot')
+                      if idx >= 0 and len(parts) > idx+2:
+                          return '/' + '/'.join(parts[idx+2:-1])
+                  except Exception:
+                      pass
+              return '/'
+          def ecosystem_of(pr):
+              # Extrae ecosistema desde la rama (npm_and_yarn → npm, etc.)
+              ref = pr.get('headRefName','')
+              if '/' in ref:
+                  parts = ref.split('/')
+                  try:
+                      idx = parts.index('dependabot')
+                      if idx >= 0 and len(parts) > idx+1:
+                          eco = parts[idx+1]
+                          return 'npm' if eco == 'npm_and_yarn' else eco
+                  except Exception:
+                      pass
+              return 'unknown'
+
+          total_agg = {'major':0,'minor':0,'patch':0,'other':0}
+          dir_agg = {}
+          eco_agg = {}
+          for pr in prs:
+              meta = parse_title(pr.get('title',''))
+              typ = update_type(meta.get('from',''), meta.get('to',''))
+              total_agg[typ] = total_agg.get(typ,0)+1
+              d = directory_of(pr)
+              dir_agg.setdefault(d, {'major':0,'minor':0,'patch':0,'other':0})
+              dir_agg[d][typ] += 1
+              e = ecosystem_of(pr)
+              eco_agg.setdefault(e, {'major':0,'minor':0,'patch':0,'other':0})
+              eco_agg[e][typ] += 1
+
+          flow.append(Paragraph('Índice', styles['Heading2']))
+          # Tabla de contenidos para navegación rápida del documento
+          flow.append(Paragraph('1. Resumen general', styles['Normal']))
+          flow.append(Paragraph('2. Métricas por directorio', styles['Normal']))
+          flow.append(Paragraph('3. Métricas por ecosistema', styles['Normal']))
+          flow.append(Paragraph('4. Listado de PRs', styles['Normal']))
+          flow.append(Spacer(1,12))
+
+          flow.append(Paragraph('Resumen general', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          data_summary = [['Tipo','Cantidad'],['major',total_agg['major']],['minor',total_agg['minor']],['patch',total_agg['patch']],['other',total_agg['other']]]
+          tbl_sum = Table(data_summary, repeatRows=1)
+          tbl_sum.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+          flow.append(tbl_sum)
+          flow.append(Spacer(1,12))
+
+          flow.append(Paragraph('Métricas por directorio', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          data_dir = [['Directorio','major','minor','patch','other']]
+          for d in sorted(dir_agg.keys()):
+              row = [d, dir_agg[d]['major'], dir_agg[d]['minor'], dir_agg[d]['patch'], dir_agg[d]['other']]
+              data_dir.append(row)
+          tbl_dir = Table(data_dir, repeatRows=1)
+          tbl_dir.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+          flow.append(tbl_dir)
+          flow.append(Spacer(1,12))
+
+          flow.append(Paragraph('Métricas por ecosistema', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          data_eco = [['Ecosistema','major','minor','patch','other']]
+          for e in sorted(eco_agg.keys()):
+              row = [e, eco_agg[e]['major'], eco_agg[e]['minor'], eco_agg[e]['patch'], eco_agg[e]['other']]
+              data_eco.append(row)
+          tbl_eco = Table(data_eco, repeatRows=1)
+          tbl_eco.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+          flow.append(tbl_eco)
+          flow.append(Spacer(1,12))
+
+          flow.append(Paragraph('Listado de PRs', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          data = [['PR','Paquete','Desde','Hasta','Dir','Estado','Labels','Creado']]
+          for pr in prs:
+              num = pr.get('number','')
+              title = pr.get('title','')
+              meta = parse_title(title)
+              created = pr.get('createdAt','')
+              try:
+                  created_fmt = datetime.fromisoformat(created.replace('Z','+00:00')).strftime('%Y-%m-%d')
+              except Exception:
+                  created_fmt = 'N/A'
+              labels = ', '.join([l.get('name','') for l in pr.get('labels',[])]) or '—'
+              state = pr.get('state','open')
+              d = meta.get('dir') or directory_of(pr)
+              data.append([f"#{num}", meta['name'], meta['from'], meta['to'], d, state, labels, created_fmt])
+          table = Table(data, repeatRows=1)
+          table.setStyle(TableStyle([
+              ('BACKGROUND',(0,0),(-1,0),colors.lightgrey),
+              ('TEXTCOLOR',(0,0),(-1,0),colors.black),
+              ('GRID',(0,0),(-1,-1),0.5,colors.grey),
+              ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
+              ('ALIGN',(0,0),(-1,-1),'LEFT'),
+              ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+          ]))
+          flow.append(table)
+          doc.build(flow)
+          print(f"PDF generado en {pdf_path}")
+          PY
+
+      - name: 🧾 Generar HTML del reporte
+        if: ${{ inputs.generate_html_report }}
+        env:
+          PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
+          HTML_PATH: docs/${{ inputs.html_report_name }}
+        run: |
+          python3 - << 'PY'
+          # Genera un HTML navegable con índice y métricas agregadas
+          import json, os
+          from datetime import datetime, timezone
+          import re
+          try:
+              prs = json.loads(os.getenv('PRS_DATA','[]'))
+          except Exception:
+              prs = []
+          html_path = os.getenv('HTML_PATH','docs/dependabot-report.html')
+          os.makedirs(os.path.dirname(html_path), exist_ok=True)
+          def parse_title(t):
+              # Extrae paquete, versiones y directorio del título
+              m = re.search(r"bump\s+([^\s]+)\s+from\s+([^\s]+)\s+to\s+([^\s]+)(?:\s+in\s+(.+))?", t, re.IGNORECASE)
+              if m:
+                  return {'name': m.group(1), 'from': m.group(2), 'to': m.group(3), 'dir': m.group(4) or ''}
+              return {'name':'—','from':'','to':'','dir':''}
+          def semver_tuple(s):
+              nums = [int(x) for x in re.findall(r"\d+", s)[:3]]
+              while len(nums) < 3:
+                  nums.append(0)
+              return tuple(nums)
+          def update_type(f, t):
+              # Determina el tipo de actualización
+              if not f or not t:
+                  return 'other'
+              fM,fm,fp = semver_tuple(f)
+              tM,tm,tp = semver_tuple(t)
+              if tM != fM:
+                  return 'major'
+              if tm != fm:
+                  return 'minor'
+              if tp != fp:
+                  return 'patch'
+              return 'other'
+          def directory_of(pr):
+              # Obtiene directorio principal del cambio
+              meta = parse_title(pr.get('title',''))
+              if meta.get('dir'):
+                  return meta['dir']
+              ref = pr.get('headRefName','')
+              if '/' in ref:
+                  parts = ref.split('/')
+                  try:
+                      idx = parts.index('dependabot')
+                      if idx >= 0 and len(parts) > idx+2:
+                          return '/' + '/'.join(parts[idx+2:-1])
+                  except Exception:
+                      pass
+              return '/'
+          def ecosystem_of(pr):
+              # Detecta ecosistema desde la rama
+              ref = pr.get('headRefName','')
+              if '/' in ref:
+                  parts = ref.split('/')
+                  try:
+                      idx = parts.index('dependabot')
+                      if idx >= 0 and len(parts) > idx+1:
+                          eco = parts[idx+1]
+                          return 'npm' if eco == 'npm_and_yarn' else eco
+                  except Exception:
+                      pass
+              return 'unknown'
+          total_agg = {'major':0,'minor':0,'patch':0,'other':0}
+          dir_agg = {}
+          eco_agg = {}
+          rows = []
+          for pr in prs:
+              meta = parse_title(pr.get('title',''))
+              typ = update_type(meta.get('from',''), meta.get('to',''))
+              total_agg[typ] = total_agg.get(typ,0)+1
+              d = directory_of(pr)
+              dir_agg.setdefault(d, {'major':0,'minor':0,'patch':0,'other':0})
+              dir_agg[d][typ] += 1
+              e = ecosystem_of(pr)
+              eco_agg.setdefault(e, {'major':0,'minor':0,'patch':0,'other':0})
+              eco_agg[e][typ] += 1
+              labels = ', '.join([l.get('name','') for l in pr.get('labels',[])]) or '—'
+              created = pr.get('createdAt','')
+              try:
+                  created_fmt = datetime.fromisoformat(created.replace('Z','+00:00')).strftime('%Y-%m-%d')
+              except Exception:
+                  created_fmt = 'N/A'
+              rows.append({'num': pr.get('number',''), 'name': meta['name'], 'from': meta['from'], 'to': meta['to'], 'dir': d, 'state': pr.get('state','open'), 'labels': labels, 'created': created_fmt, 'url': pr.get('url','#')})
+          ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+          html = []
+          html.append('<!doctype html><html><head><meta charset="utf-8"><title>Reporte Dependabot</title><style>body{font-family:Arial,sans-serif;padding:20px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px}th{background:#f2f2f2}</style></head><body>')
+          html.append(f'<h1>Reporte Dependabot</h1><p>Generado: {ts}</p>')
+          html.append('<h2>Índice</h2><ol><li><a href="#resumen">Resumen general</a></li><li><a href="#dir">Métricas por directorio</a></li><li><a href="#eco">Métricas por ecosistema</a></li><li><a href="#listado">Listado de PRs</a></li></ol>')
+          html.append('<h2 id="resumen">Resumen general</h2>')
+          html.append('<table><thead><tr><th>Tipo</th><th>Cantidad</th></tr></thead><tbody>')
+          for k in ['major','minor','patch','other']:
+              html.append(f'<tr><td>{k}</td><td>{total_agg[k]}</td></tr>')
+          html.append('</tbody></table>')
+          html.append('<h2 id="dir">Métricas por directorio</h2>')
+          html.append('<table><thead><tr><th>Directorio</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
+          for d in sorted(dir_agg.keys()):
+              v = dir_agg[d]
+              html.append(f'<tr><td>{d}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
+          html.append('</tbody></table>')
+          html.append('<h2 id="eco">Métricas por ecosistema</h2>')
+          html.append('<table><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
+          for e in sorted(eco_agg.keys()):
+              v = eco_agg[e]
+              html.append(f'<tr><td>{e}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
+          html.append('</tbody></table>')
+          html.append('<h2 id="listado">Listado de PRs</h2>')
+          html.append('<table><thead><tr><th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Estado</th><th>Labels</th><th>Creado</th></tr></thead><tbody>')
+          for r in rows:
+              html.append(f'<tr><td><a href="{r["url"]}">#{r["num"]}</a></td><td>{r["name"]}</td><td>{r["from"]}</td><td>{r["to"]}</td><td>{r["dir"]}</td><td>{r["state"]}</td><td>{r["labels"]}</td><td>{r["created"]}</td></tr>')
+          html.append('</tbody></table>')
+          html.append('</body></html>')
+          with open(html_path,'w',encoding='utf-8') as f:
+              f.write(''.join(html))
+          print(f"HTML generado en {html_path}")
+          PY
+
+      - name: 📤 Subir HTML del reporte
+        if: ${{ inputs.generate_html_report }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-report-html
+          path: docs/${{ inputs.html_report_name }}
+      - name: 📤 Subir PDF del reporte
+        if: ${{ inputs.generate_pdf_report }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-report-pdf
+          path: docs/${{ inputs.pdf_report_name }}
+
+      - name: 💬 Comentar Issue con enlace al PDF
+        if: ${{ (inputs.generate_pdf_report || inputs.generate_html_report) && steps.create_issue.outputs.issue_url != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - << 'PY'
+          import os, re, subprocess, json
+          repo = os.getenv('REPO')
+          run_id = os.getenv('RUN_ID')
+          issue_url = os.getenv('ISSUE_URL','')
+          m = re.search(r"/issues/(\d+)", issue_url)
+          if not m:
+              raise SystemExit(0)
+          num = m.group(1)
+          try:
+              r = subprocess.run(['gh','api',f'repos/{repo}/actions/runs/{run_id}/artifacts'], capture_output=True, text=True)
+              artifacts = json.loads(r.stdout) if r.returncode == 0 else {}
+          except Exception:
+              artifacts = {}
+          server = os.getenv('GITHUB_SERVER_URL','https://github.com')
+          run_link = f"{server}/{repo}/actions/runs/{run_id}"
+          links = []
+          try:
+              for a in artifacts.get('artifacts', []):
+                  if a.get('name') in ['dependabot-report-pdf','dependabot-report-html']:
+                      if 'archive_download_url' in a:
+                          links.append(f"{a['name']}: {a['archive_download_url']}")
+          except Exception:
+              pass
+          body = ""
+          if links:
+              body += "Descargar reportes (zip):\n" + "\n".join(links) + "\n\n"
+          body += f"Descargar reportes desde el run: {run_link}\n"
+          subprocess.run(['gh','issue','comment',num,'--repo',repo,'--body',body], check=False)
+          PY
+
       - name: 🛑 Cerrar PRs de Dependabot
-        if: ${{ inputs.close_dependabot_prs && steps.detect_prs.outputs.prs_count != '0' && steps.create_issue.outputs.issue_url != '' }}
+        if: ${{ inputs.close_dependabot_prs && steps.detect_prs.outputs.prs_count != '0' && steps.create_issue.outputs.issue_url != '' && !inputs.dry_run_close }}
         env:
           GH_TOKEN: ${{ github.token }}
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
           ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
+          SKIP_CLOSE_LABELS: ${{ inputs.skip_close_labels }}
         run: |
           python3 - << 'PY'
           import json, os, subprocess
@@ -552,11 +984,21 @@ jobs:
           closed = 0
           debug_path = Path('docs')/ 'output.txt'
           issue_url = os.getenv('ISSUE_URL','')
+          skip_labels = [s.strip().lower() for s in os.getenv('SKIP_CLOSE_LABELS','').split(',') if s.strip()]
           for pr in prs:
               num = pr.get('number')
               if not num:
                   continue
               repo = os.getenv('GITHUB_REPOSITORY')
+              labels = [ (l.get('name','') or '').lower() for l in pr.get('labels',[]) ]
+              if skip_labels and any(l in skip_labels for l in labels):
+                  try:
+                      debug_path.parent.mkdir(parents=True, exist_ok=True)
+                      with open(debug_path,'a') as df:
+                          df.write(f"Skipped closing PR #{num} due to labels: {', '.join(labels)}\n")
+                  except Exception:
+                      pass
+                  continue
               comment = 'Cerrado por reporte consolidado de Dependabot'
               if issue_url:
                   comment += f" — Reporte: {issue_url}"
@@ -585,15 +1027,16 @@ jobs:
           PRS_COUNT: ${{ steps.detect_prs.outputs.prs_count }}
           ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
           TRIGGER_DEPENDABOT_NOW: ${{ inputs.trigger_dependabot_now }}
+          MAX_SUMMARY: ${{ inputs.max_prs_in_summary }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
+          # Genera el summary del job con tablas, badges y agrupación por directorio
           import json, os
           from datetime import datetime, timezone
 
           repo = os.getenv('GITHUB_REPOSITORY')
           server_url = os.getenv('GITHUB_SERVER_URL', 'https://github.com')
 
-          # Cargar PRs
           try:
               prs_raw = os.getenv('PRS_DATA', '[]')
               prs_data = json.loads(prs_raw) if prs_raw and prs_raw.strip() != '' else []
@@ -605,6 +1048,7 @@ jobs:
           issue_url = os.getenv('ISSUE_URL','')
 
           def current_state(num: int):
+              # Obtiene estado actual del PR (open/merged/closed)
               try:
                   r = os.popen(f"gh api repos/{repo}/pulls/{num}").read()
                   data = json.loads(r)
@@ -616,67 +1060,217 @@ jobs:
               except Exception:
                   return 'unknown'
 
+          def status_badge(state: str):
+              # Genera badge visual para el estado del PR
+              color = {'open':'brightgreen','closed':'lightgrey','merged':'purple','unknown':'blue'}.get(state,'blue')
+              return f"<img src='https://img.shields.io/badge/status-{state}-{color}?style=flat-square' alt='{state}'/>"
+
+          def label_badges(labels):
+              # Genera badges para cada label incluyendo color
+              parts = []
+              for l in labels:
+                  name = l.get('name','')
+                  color = l.get('color','0366d6')
+                  if not name:
+                      continue
+                  parts.append(f"<img src='https://img.shields.io/badge/{name.replace('-', '--')}-{color}?style=flat-square' alt='{name}' style='margin:2px'>")
+              return ' '.join(parts) if parts else '➖'
+
+          def days_ago(iso):
+              # Calcula edad en días desde fecha ISO
+              try:
+                  dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
+                  now = datetime.now(timezone.utc)
+                  return (now - dt).days
+              except Exception:
+                  return None
+
+          def parse_title(t):
+              # Extrae paquete/versions/directorio desde título de Dependabot
+              import re
+              m = re.search(r"bump\s+([^\s]+)\s+from\s+([^\s]+)\s+to\s+([^\s]+)(?:\s+in\s+(.+))?", t, re.IGNORECASE)
+              if m:
+                  return {'name': m.group(1), 'from': m.group(2), 'to': m.group(3), 'dir': m.group(4) or ''}
+              return None
+
+          def semver_tuple(s):
+              import re
+              parts = re.findall(r"\d+", s)
+              nums = [int(x) for x in parts[:3]]
+              while len(nums) < 3:
+                  nums.append(0)
+              return tuple(nums)
+
+          def update_type(f, t):
+              # Determina el tipo de actualización a partir de versiones
+              fM,fm,fp = semver_tuple(f)
+              tM,tm,tp = semver_tuple(t)
+              if tM != fM:
+                  return 'major'
+              if tm != fm:
+                  return 'minor'
+              if tp != fp:
+                  return 'patch'
+              return 'other'
+
+          def directory_of(pr):
+              meta = parse_title(pr.get('title','')) or {'dir':''}
+              d = meta.get('dir','')
+              if d:
+                  return d
+              ref = pr.get('headRefName','')
+              if '/' in ref:
+                  try:
+                      parts = ref.split('/')
+                      idx = parts.index('dependabot') if 'dependabot' in parts else -1
+                      if idx >= 0 and len(parts) > idx+2:
+                          return '/' + '/'.join(parts[idx+2:-1])
+                  except Exception:
+                      pass
+              return '/'
+
+          def sort_key(pr):
+              order = {'open':0,'merged':1,'closed':2,'unknown':3}
+              st = pr.get('state','open')
+              try:
+                  ts = datetime.fromisoformat(pr.get('createdAt','').replace('Z','+00:00')).timestamp()
+              except Exception:
+                  ts = 0
+              return (order.get(st,3), -ts)
+
           summary = []
           summary.append("# 🔄 Pull Requests de Dependabot\n\n")
           if issue_url:
               summary.append(f"> 🧾 <b>Reporte consolidado:</b> <a href='{issue_url}'>{issue_url}</a>\n\n")
-
           if os.getenv('TRIGGER_DEPENDABOT_NOW','false') == 'true':
               cfg_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
               summary.append(f"> ⚡ <b>Trigger enviado</b>: se editó <a href='{cfg_url}'>dependabot.yml</a> para forzar un job de actualización.\n\n")
 
           if prs_data and len(prs_data) > 0:
-              show_n = min(prs_count, 30)
-              summary.append(f"Mostrando {show_n} de {prs_count} PRs\n\n")
+              try:
+                  max_summary = int(os.getenv('MAX_SUMMARY','30'))
+              except Exception:
+                  max_summary = 30
+              prs_sorted = sorted(prs_data, key=sort_key)
+              show_list = prs_sorted[:min(prs_count, max_summary)]
 
+              agg = {'major':0,'minor':0,'patch':0,'other':0}
+              for pr in show_list:
+                  meta = parse_title(pr.get('title',''))
+                  if meta and meta['from'] and meta['to']:
+                      agg[update_type(meta['from'], meta['to'])] += 1
+
+              summary.append(f"Mostrando {len(show_list)} de {prs_count} PRs\n\n")
               summary.append("<table>\n")
               summary.append("<thead>\n")
               summary.append("<tr>\n")
-              summary.append("<th>PR</th><th>Título</th><th>Labels</th><th>Creado</th><th>Estado</th>\n")
+              summary.append("<th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Estado</th><th>Labels</th><th>Edad</th>\n")
               summary.append("</tr>\n")
               summary.append("</thead>\n")
               summary.append("<tbody>\n")
-
-              for pr in prs_data[:show_n]:
-                  pr_number = pr.get('number', 'N/A')
-                  pr_url = pr.get('url', '#')
-                  pr_title = pr.get('title', 'Sin título')
-                  pr_labels = ', '.join([l.get('name', '') for l in pr.get('labels', [])])
-                  pr_created = pr.get('createdAt', '')
-                  try:
-                      pr_date = datetime.fromisoformat(pr_created.replace('Z', '+00:00')).strftime('%Y-%m-%d')
-                  except:
-                      pr_date = 'N/A'
+              for pr in show_list:
+                  pr_number = pr.get('number','N/A')
+                  pr_url = pr.get('url','#')
+                  pr_title = pr.get('title','Sin título')
+                  lbl_html = label_badges(pr.get('labels',[]))
+                  created = pr.get('createdAt','')
+                  d_ago = days_ago(created)
                   state_now = current_state(pr_number)
-
+                  meta = parse_title(pr_title) or {'name':'—','from':'—','to':'—','dir':directory_of(pr)}
                   summary.append("<tr>\n")
                   summary.append(f"<td><a href='{pr_url}'><b>#{pr_number}</b></a></td>\n")
-                  summary.append(f"<td>{pr_title}</td>\n")
-                  summary.append(f"<td>{pr_labels if pr_labels else '➖'}</td>\n")
-                  summary.append(f"<td>{pr_date}</td>\n")
-                  summary.append(f"<td><code>{state_now}</code></td>\n")
+                  summary.append(f"<td>{meta['name']}</td>\n")
+                  summary.append(f"<td>{meta['from']}</td>\n")
+                  summary.append(f"<td>{meta['to']}</td>\n")
+                  summary.append(f"<td><code>{meta['dir'] or '/'}</code></td>\n")
+                  summary.append(f"<td>{status_badge(state_now)}</td>\n")
+                  summary.append(f"<td>{lbl_html}</td>\n")
+                  summary.append(f"<td>{(str(d_ago)+' d') if d_ago is not None else 'N/A'}</td>\n")
                   summary.append("</tr>\n")
-
               summary.append("</tbody>\n")
               summary.append("</table>\n\n")
 
-              if prs_count > show_n:
-                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Adependabot"
+              if prs_count > len(show_list):
+                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot"
                   summary.append(f"> <a href='{prs_url}'>📋 <b>Ver todos los PRs ({prs_count})</b></a>\n\n")
+
+              summary.append("<details>\n")
+              summary.append("<summary><h2>📁 Detalles por directorio</h2></summary>\n\n")
+              groups = {}
+              for pr in show_list:
+                  d = directory_of(pr)
+                  groups.setdefault(d or '/', []).append(pr)
+              for d in sorted(groups.keys()):
+                  items = groups[d]
+                  summary.append(f"<h3><code>{d or '/'}</code> ({len(items)})</h3>\n")
+                  summary.append("<table>\n<thead>\n<tr>\n<th>PR</th><th>Paquete</th><th>Tipo</th><th>Edad</th>\n</tr>\n</thead>\n<tbody>\n")
+                  for pr in items:
+                      pr_number = pr.get('number','N/A')
+                      pr_url = pr.get('url','#')
+                      pr_title = pr.get('title','Sin título')
+                      created = pr.get('createdAt','')
+                      d_ago = days_ago(created)
+                      meta = parse_title(pr_title) or {'name':'—','from':'','to':''}
+                      typ = '—'
+                      if meta['from'] and meta['to']:
+                          typ = update_type(meta['from'], meta['to'])
+                      typ_badge = f"<img src='https://img.shields.io/badge/update-{typ}-informational?style=flat-square' alt='{typ}'/>"
+                      summary.append("<tr>\n")
+                      summary.append(f"<td><a href='{pr_url}'>#{pr_number}</a></td>\n")
+                      summary.append(f"<td>{meta['name']}</td>\n")
+                      summary.append(f"<td>{typ_badge}</td>\n")
+                      summary.append(f"<td>{(str(d_ago)+' d') if d_ago is not None else 'N/A'}</td>\n")
+                      summary.append("</tr>\n")
+                  summary.append("</tbody>\n</table>\n\n")
+              summary.append("</details>\n\n")
           else:
               summary.append("> ℹ️ No hay PRs activos de Dependabot en este momento.\n\n")
 
           summary.append("<details>\n")
-          summary.append("<summary><h2>🔗 Cómo activar manualmente</h2></summary>\n\n")
+          summary.append("<summary><h2>⚙️ Cómo activar manualmente</h2></summary>\n\n")
           dep_graph = f"{server_url}/{repo}/network/dependencies"
-          prs_link = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Adependabot"
-          summary.append("1) Abrir <b>Insights → Dependency graph → Dependabot</b>\n")
-          summary.append(f"2) En la sección <b>Recent update jobs</b>, pulsa <b>Check for updates</b> • <a href='{dep_graph}'>Acceder</a>\n")
-          summary.append(f"3) Revisa los nuevos PRs: <a href='{prs_link}'>Listado de PRs de Dependabot</a>\n\n")
+          prs_link = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
+          summary.append("1) Ve a <b>Insights → Dependency graph → Dependabot</b>\n")
+          summary.append(f"2) En <b>Recent update jobs</b>, pulsa <b>Check for updates</b> • <a href='{dep_graph}'>Acceder</a>\n")
+          summary.append(f"3) Revisa nuevos PRs: <a href='{prs_link}'>Listado de PRs de Dependabot</a>\n\n")
+          summary.append("</details>\n\n")
+
+          summary.append("<details>\n")
+          summary.append("<summary><h2>📄 Reportes Exportados</h2></summary>\n\n")
+          run_id = os.getenv('GITHUB_RUN_ID','')
+          if run_id:
+              run_link = f"{server_url}/{repo}/actions/runs/{run_id}"
+              summary.append(f"- PDF/HTML: <a href='{run_link}'>Descargar desde el run</a>\n\n")
+          summary.append("</details>\n\n")
+
+          summary.append("<details>\n")
+          summary.append("<summary><h2>🔗 Enlaces Útiles</h2></summary>\n\n")
+          config_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
+          security_url = f"{server_url}/{repo}/settings/security_analysis"
+          insights_url = f"{server_url}/{repo}/network/dependencies"
+          labels_url = f"{server_url}/{repo}/labels"
+          prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
+          advisories_url = f"{server_url}/{repo}/security/dependabot"
+          summary.append(f"- 📝 <a href='{config_url}'><b>Ver Configuración</b></a>\n")
+          summary.append(f"- 🛡️ <a href='{security_url}'><b>Security Settings</b></a>\n")
+          summary.append(f"- 📊 <a href='{insights_url}'><b>Dependency Graph</b></a>\n")
+          summary.append(f"- 🏷️ <a href='{labels_url}'><b>Gestionar Labels</b></a>\n")
+          summary.append(f"- 🔄 <a href='{prs_url}'><b>PRs de Dependabot</b></a>\n")
+          summary.append(f"- 🚨 <a href='{advisories_url}'><b>Security Alerts</b></a>\n\n")
+          summary.append("</details>\n\n")
+
+          summary.append("<details>\n")
+          summary.append("<summary><h2>ℹ️ Información</h2></summary>\n\n")
+          summary.append("- 🔍 Detección y resumen inteligente de PRs\n")
+          summary.append("- 🏷️ Badges de estado y labels\n")
+          summary.append("- ⏱️ Edad de PRs y ordenamiento\n")
+          summary.append("- 📁 Sección por directorio\n")
+          summary.append("- 🔗 Enlaces útiles de UI\n\n")
           summary.append("</details>\n\n")
 
           timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
-          summary.append(f"<sub>{timestamp}</sub>\n")
+          workflow_url = f"{server_url}/jersonmartinez/reusable-workflows"
+          summary.append(f"<sub>🤖 Generado por <a href='{workflow_url}'><b>Reusable Workflows</b></a> • {timestamp}</sub>\n")
 
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'w') as f:
               f.write(''.join(summary))
