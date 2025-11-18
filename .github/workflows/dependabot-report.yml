@@ -31,7 +31,7 @@ on:
       wait_minutes:
         required: false
         type: number
-        default: 10
+        default: 5
         description: 'Minutos máximos para esperar PRs nuevos de Dependabot'
 
       create_missing_labels:
@@ -98,7 +98,7 @@ on:
       generate_pdf_report:
         required: false
         type: boolean
-        default: true
+        default: false
         description: 'Generar y subir PDF del reporte de PRs'
 
       # Nombre del archivo PDF a generar
@@ -624,24 +624,33 @@ jobs:
           python3 /tmp/create_issue.py
 
       - name: 📄 Generar PDF del reporte
+        id: generate_pdf
         if: ${{ inputs.generate_pdf_report }}
         env:
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
           PDF_PATH: docs/${{ inputs.pdf_report_name }}
           REPO: ${{ github.repository }}
         run: |
+          python3 -m pip install --user reportlab || true
+          export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
           python3 - << 'PY'
           # Genera un PDF con índice y métricas por tipo, directorio y ecosistema
-          import json, os, subprocess, sys
+          import json, os
           from datetime import datetime, timezone
+          created = False
           try:
-              subprocess.check_call([sys.executable,'-m','pip','install','reportlab'])
-          except Exception:
-              pass
-          from reportlab.lib.pagesizes import A4
-          from reportlab.lib import colors
-          from reportlab.lib.styles import getSampleStyleSheet
-          from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+              from reportlab.lib.pagesizes import A4
+              from reportlab.lib import colors
+              from reportlab.lib.styles import getSampleStyleSheet
+              from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+          except Exception as e:
+              # Fallback: sin reportlab, evita fallo y marca no creado
+              out = os.environ.get('GITHUB_OUTPUT')
+              if out:
+                  with open(out,'a') as f:
+                      f.write('created=false\n')
+              print(f"Reportlab no disponible: {e}. Saltando generación de PDF.")
+              raise SystemExit(0)
           try:
               prs = json.loads(os.getenv('PRS_DATA','[]'))
           except Exception:
@@ -791,6 +800,11 @@ jobs:
           ]))
           flow.append(table)
           doc.build(flow)
+          created = True
+          out = os.environ.get('GITHUB_OUTPUT')
+          if out:
+              with open(out,'a') as f:
+                  f.write('created=true\n')
           print(f"PDF generado en {pdf_path}")
           PY
 
@@ -924,7 +938,7 @@ jobs:
           name: dependabot-report-html
           path: docs/${{ inputs.html_report_name }}
       - name: 📤 Subir PDF del reporte
-        if: ${{ inputs.generate_pdf_report }}
+        if: ${{ inputs.generate_pdf_report && steps.generate_pdf.outputs.created == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: dependabot-report-pdf
@@ -1028,6 +1042,7 @@ jobs:
           ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
           TRIGGER_DEPENDABOT_NOW: ${{ inputs.trigger_dependabot_now }}
           MAX_SUMMARY: ${{ inputs.max_prs_in_summary }}
+          FAST_SUMMARY: ${{ inputs.fast_summary }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
           # Genera el summary del job con tablas, badges y agrupación por directorio
@@ -1048,7 +1063,7 @@ jobs:
           issue_url = os.getenv('ISSUE_URL','')
 
           def current_state(num: int):
-              # Obtiene estado actual del PR (open/merged/closed)
+              # Obtiene estado actual del PR (open/merged/closed) si no está en modo rápido
               try:
                   r = os.popen(f"gh api repos/{repo}/pulls/{num}").read()
                   data = json.loads(r)
@@ -1168,6 +1183,7 @@ jobs:
               summary.append("</tr>\n")
               summary.append("</thead>\n")
               summary.append("<tbody>\n")
+              fast = os.getenv('FAST_SUMMARY','true').lower() == 'true'
               for pr in show_list:
                   pr_number = pr.get('number','N/A')
                   pr_url = pr.get('url','#')
@@ -1175,7 +1191,7 @@ jobs:
                   lbl_html = label_badges(pr.get('labels',[]))
                   created = pr.get('createdAt','')
                   d_ago = days_ago(created)
-                  state_now = current_state(pr_number)
+                  state_now = pr.get('state','open') if fast else current_state(pr_number)
                   meta = parse_title(pr_title) or {'name':'—','from':'—','to':'—','dir':directory_of(pr)}
                   summary.append("<tr>\n")
                   summary.append(f"<td><a href='{pr_url}'><b>#{pr_number}</b></a></td>\n")
@@ -1287,3 +1303,8 @@ jobs:
         with:
           name: dependabot-report-debug
           path: docs/output.txt
+      fast_summary:
+        required: false
+        type: boolean
+        default: true
+        description: 'Acelerar summary evitando llamadas por-PR a la API'
