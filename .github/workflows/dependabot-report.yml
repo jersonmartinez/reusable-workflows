@@ -960,7 +960,7 @@ jobs:
           html.append('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>')
           html.append('<style>body{padding-top:64px} #toTop{position:fixed;bottom:20px;right:20px;z-index:9999;display:none} .badge-ver{font-size:0.85rem} .section-card{border:1px solid var(--bs-border-color);border-radius:.5rem;padding:1rem;margin-bottom:1rem;background:var(--bs-tertiary-bg)} .table-responsive{max-height:540px;overflow:auto} .table thead th{position:sticky;top:0;background:var(--bs-tertiary-bg);z-index:1} .chip{display:inline-block;padding:.25rem .5rem;border-radius:999px;border:1px solid var(--bs-border-color);margin:.15rem;cursor:pointer;background:var(--bs-body-bg);color:var(--bs-body-color)} .chip.active{background:var(--bs-primary);color:var(--bs-white);border-color:var(--bs-primary)} .toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.5rem 0 1rem} .kpi{border-radius:.5rem;padding:1rem;background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color)} .navbar{border-bottom:0 !important;box-shadow:none !important}</style>')
           html.append('</head><body>')
-          html.append('<nav class="navbar navbar-dark bg-dark fixed-top"><div class="container-fluid"><a class="navbar-brand d-flex align-items-center" href="#"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2">PRB</a><div class="d-flex gap-2 align-items-center"><a class="btn btn-outline-light btn-sm" href="#resumen">Resumen</a><a class="btn btn-outline-light btn-sm" href="#dir">Directorios</a><a class="btn btn-outline-light btn-sm" href="#eco">Ecosistemas</a><a class="btn btn-outline-light btn-sm" href="#listado">PRs</a><div class="form-check form-switch text-white ms-2"><input class="form-check-input" type="checkbox" id="themeToggle"><label class="form-check-label" for="themeToggle">🌙</label></div></div></div></nav>')
+          html.append('<nav class="navbar navbar-dark bg-dark fixed-top"><div class="container-fluid"><a class="navbar-brand d-flex align-items-center" href="#"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2">PRB</a><div class="d-flex gap-2 align-items-center"><a class="btn btn-outline-light btn-sm" href="#resumen">Resumen</a><a class="btn btn-outline-light btn-sm" href="#dir">Directorios</a><a class="btn btn-outline-light btn-sm" href="#dir-detalles">Detalles</a><a class="btn btn-outline-light btn-sm" href="#eco">Ecosistemas</a><a class="btn btn-outline-light btn-sm" href="#listado">PRs</a><div class="form-check form-switch text-white ms-2"><input class="form-check-input" type="checkbox" id="themeToggle"><label class="form-check-label" for="themeToggle">🌙</label></div></div></div></nav>')
           html.append('<div class="container my-4">')
           html.append(f'<h1 class="mb-3">Reporte Dependabot</h1><p class="text-muted">Generado: {ts}</p>')
           html.append('<h2 id="resumen" class="mt-4">📊 Resumen general</h2>')
@@ -1165,6 +1165,51 @@ jobs:
           html.append('</ul></div></div>')
           html.append('</div>')
 
+          html.append('<h2 id="dir-detalles" class="mt-4">📁 Detalles por directorio</h2>')
+          def type_badges(t):
+              base = '<span class="badge text-bg-primary me-1">update</span>'
+              color = {'major':'danger','minor':'warning','patch':'success','other':'secondary'}.get(t,'secondary')
+              return base + f'<span class="badge text-bg-{color}">{t}</span>'
+
+          dir_groups = {}
+          for r in rows:
+              d = r.get('dir','/')
+              dir_groups.setdefault(d, []).append(r)
+
+          html.append('<div class="accordion" id="dirDetails">')
+          for d in sorted(dir_groups.keys()):
+              items = dir_groups[d]
+              href = f'{server_url}/{repo}/tree/main' + ('' if d == '/' else d)
+              safe_dir = d if d else '/'
+              html.append('<div class="accordion-item">')
+              html.append(f'<h2 class="accordion-header" id="head-{safe_dir}">')
+              html.append(f'<button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#col-{safe_dir}" aria-expanded="false" aria-controls="col-{safe_dir}"><a href="{href}" target="_blank" rel="noopener" class="me-2"><code>{safe_dir}</code></a>({len(items)})</button>')
+              html.append('</h2>')
+              html.append(f'<div id="col-{safe_dir}" class="accordion-collapse collapse" aria-labelledby="head-{safe_dir}" data-bs-parent="#dirDetails"><div class="accordion-body">')
+              html.append('<div class="table-responsive">')
+              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th data-sort="num">PR</th><th data-sort="name">Paquete</th><th data-sort="type">Tipo</th><th data-sort="created">Edad</th></tr></thead><tbody>')
+              for r in items:
+                  typ = 'other'
+                  try:
+                      typ = update_type(r.get('from',''), r.get('to','')) if r.get('from') and r.get('to') else 'other'
+                  except Exception:
+                      typ = 'other'
+                  age = age_days(r.get('created_iso',''))
+                  age_disp = (str(age)+' d') if isinstance(age,int) else 'N/A'
+                  html.append(
+                      f'<tr data-num="{r["num"]}" data-name="{r["name"]}" data-type="{typ}" data-dir="{safe_dir}" data-eco="{r.get("eco","unknown")}" data-state="{r.get("state","open").lower()}" data-created="{r["created"]}">' 
+                      f'<td><a href="{r["url"]}" target="_blank" rel="noopener">#{r["num"]}</a></td>'
+                      f'<td>{r["name"]}</td>'
+                      f'<td>{type_badges(typ)}</td>'
+                      f'<td>{age_disp}</td>'
+                      f'</tr>'
+                  )
+              html.append('</tbody></table>')
+              html.append('</div>')
+              html.append('</div></div>')
+              html.append('</div>')
+          html.append('</div>')
+
           html.append('<h2 class="mt-4">🛡️ Alertas de Seguridad</h2>')
           try:
               import json as _j
@@ -1219,8 +1264,11 @@ jobs:
           html.append('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>')
           html.append('<script>\n' 
             'const b=document.getElementById("toTop");\n' 
-            'window.addEventListener("scroll",()=>{b.style.display=window.scrollY>200?"block":"none";});\n' 
-            'b.addEventListener("click",()=>{window.scrollTo({top:0,behavior:"smooth"})});\n' 
+            'function updateToTop(){let y=window.scrollY||document.documentElement.scrollTop||document.body.scrollTop||0;let v=y>200;if(!v){document.querySelectorAll(".table-responsive").forEach(el=>{if(el.scrollTop>50) v=true;});} b.style.display=v?"block":"none";}\n' 
+            'window.addEventListener("scroll",updateToTop);\n' 
+            'document.querySelectorAll(".table-responsive").forEach(el=>el.addEventListener("scroll",updateToTop));\n' 
+            'b.addEventListener("click",()=>{window.scrollTo({top:0,behavior:"smooth"});document.querySelectorAll(".table-responsive").forEach(el=>el.scrollTo({top:0,behavior:"smooth"}));});\n' 
+            'updateToTop();\n' 
             'const prData = ' + json.dumps(rows) + ';\n' 
             'const dirAgg = ' + json.dumps({k:dir_agg[k] for k in dir_agg}) + ';\n' 
             'const ecoAgg = ' + json.dumps({k:eco_agg[k] for k in eco_agg}) + ';\n' 
