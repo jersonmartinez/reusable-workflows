@@ -949,7 +949,7 @@ jobs:
                   created_fmt = datetime.fromisoformat(created.replace('Z','+00:00')).strftime('%Y-%m-%d')
               except Exception:
                   created_fmt = 'N/A'
-              rows.append({'num': pr.get('number',''), 'name': meta['name'], 'from': meta['from'], 'to': meta['to'], 'dir': d, 'state': pr.get('state','open'), 'labels': labels, 'labels_list': pr.get('labels',[]), 'created': created_fmt, 'created_iso': created, 'url': pr.get('url','#')})
+              rows.append({'num': pr.get('number',''), 'name': meta['name'], 'from': meta['from'], 'to': meta['to'], 'dir': d, 'eco': e, 'state': pr.get('state','open'), 'labels': labels, 'labels_list': pr.get('labels',[]), 'created': created_fmt, 'created_iso': created, 'url': pr.get('url','#')})
           ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
           repo = os.getenv('GITHUB_REPOSITORY','')
           server_url = os.getenv('GITHUB_SERVER_URL','https://github.com')
@@ -957,11 +957,20 @@ jobs:
           html.append('<!doctype html><html><head><meta charset="utf-8"><title>Reporte Dependabot</title>')
           html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
           html.append('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">')
-          html.append('<style>#toTop{position:fixed;bottom:20px;right:20px;z-index:9999;display:none} .badge-ver{font-size:0.85rem} .section-card{border:1px solid #e5e7eb;border-radius:.5rem;padding:1rem;margin-bottom:1rem}</style>')
+          html.append('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>')
+          html.append('<style>body{padding-top:64px} #toTop{position:fixed;bottom:20px;right:20px;z-index:9999;display:none} .badge-ver{font-size:0.85rem} .section-card{border:1px solid var(--bs-border-color);border-radius:.5rem;padding:1rem;margin-bottom:1rem;background:var(--bs-tertiary-bg)} .table-responsive{max-height:540px;overflow:auto} .table thead th{position:sticky;top:0;background:var(--bs-tertiary-bg);z-index:1} .chip{display:inline-block;padding:.25rem .5rem;border-radius:999px;border:1px solid var(--bs-border-color);margin:.15rem;cursor:pointer;background:var(--bs-body-bg);color:var(--bs-body-color)} .chip.active{background:var(--bs-primary);color:var(--bs-white);border-color:var(--bs-primary)} .toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.5rem 0 1rem} .kpi{border-radius:.5rem;padding:1rem;background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color)} .progress-fixed{position:fixed;top:0;left:0;width:100%;z-index:1030}</style>')
           html.append('</head><body>')
+          html.append('<nav class="navbar navbar-dark bg-dark fixed-top"><div class="container-fluid"><a class="navbar-brand" href="#">🔒 Dependabot Report</a><div class="d-flex gap-2 align-items-center"><a class="btn btn-outline-light btn-sm" href="#resumen">Resumen</a><a class="btn btn-outline-light btn-sm" href="#dir">Directorios</a><a class="btn btn-outline-light btn-sm" href="#eco">Ecosistemas</a><a class="btn btn-outline-light btn-sm" href="#listado">PRs</a><div class="form-check form-switch text-white ms-2"><input class="form-check-input" type="checkbox" id="themeToggle"><label class="form-check-label" for="themeToggle">🌙</label></div></div></div></nav>')
+          html.append('<div class="progress progress-fixed" style="height:3px"><div id="scrollBar" class="progress-bar" role="progressbar" style="width:0%"></div></div>')
           html.append('<div class="container my-4">')
           html.append(f'<h1 class="mb-3">Reporte Dependabot</h1><p class="text-muted">Generado: {ts}</p>')
           html.append('<h2 id="resumen" class="mt-4">📊 Resumen general</h2>')
+          html.append('<div class="row g-3 mb-2">')
+          html.append(f'<div class="col-md-3"><div class="kpi"><div class="fw-bold">PRs totales</div><div class="display-6">{len(rows)}</div></div></div>')
+          html.append(f'<div class="col-md-3"><div class="kpi"><div class="fw-bold">Abiertos</div><div class="display-6">{len(open_rows)}</div></div></div>')
+          html.append(f'<div class="col-md-3"><div class="kpi"><div class="fw-bold">Fusionados</div><div class="display-6">{len(merged_rows)}</div></div></div>')
+          html.append(f'<div class="col-md-3"><div class="kpi"><div class="fw-bold">Cerrados</div><div class="display-6">{len(closed_rows)}</div></div></div>')
+          html.append('</div>')
           html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Tipo</th><th>Cantidad</th></tr></thead><tbody>')
           for k in ['major','minor','patch','other']:
               html.append(f'<tr><td>{k}</td><td>{total_agg[k]}</td></tr>')
@@ -978,6 +987,7 @@ jobs:
                   cell = f'<code>{d}</code>'
               html.append(f'<tr><td>{cell}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
+          html.append('<div class="row"><div class="col-md-6"><canvas id="chartTypes" height="160"></canvas></div><div class="col-md-6"><canvas id="chartEcos" height="160"></canvas></div></div>')
           html.append('<h2 id="eco" class="mt-4">Métricas por ecosistema</h2>')
           html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
           for e in sorted(eco_agg.keys()):
@@ -1009,6 +1019,14 @@ jobs:
                   closed_rows.append(r)
 
           html.append('<h2 id="listado" class="mt-4">PRs por estado</h2>')
+          html.append('<div class="toolbar"><input id="searchInput" class="form-control form-control-sm" placeholder="Buscar..." style="max-width:240px">')
+          html.append('<div id="dirChips" class="d-inline-block"></div>')
+          html.append('<div id="ecoChips" class="d-inline-block"></div>')
+          html.append('<div id="typeChips" class="d-inline-block"></div>')
+          html.append('<div id="riskChips" class="d-inline-block"></div>')
+          html.append('<div id="stateChips" class="d-inline-block"></div>')
+          html.append('<button id="btnCsv" class="btn btn-sm btn-outline-secondary" type="button">Descargar CSV</button>')
+          html.append('<button id="btnCopy" class="btn btn-sm btn-outline-secondary" type="button">Copiar link de búsqueda</button></div>')
           html.append('<div class="accordion" id="prAccordion">')
 
           from urllib.parse import quote_plus
@@ -1047,8 +1065,8 @@ jobs:
               except Exception:
                   return None
 
-          def risk_badge(typ, age, labels):
-              base = {'major':3,'minor':2,'patch':1,'other':1}.get(typ,'1')
+          def risk_level(typ, age, labels):
+              base = {'major':3,'minor':2,'patch':1,'other':1}.get(typ,1)
               extra = 0
               if isinstance(age,int) and age >= 60:
                   extra = 2
@@ -1059,15 +1077,25 @@ jobs:
                   extra += 1
               score = base + extra
               if score >= 5:
-                  return '<span class="badge text-bg-danger">🔥 Crítico</span>'
+                  return 'critical'
               if score >= 4:
-                  return '<span class="badge text-bg-warning">⚠️ Alto</span>'
+                  return 'high'
               if score >= 3:
+                  return 'medium'
+              return 'low'
+
+          def risk_badge(level):
+              if level == 'critical':
+                  return '<span class="badge text-bg-danger">🔥 Crítico</span>'
+              if level == 'high':
+                  return '<span class="badge text-bg-warning">⚠️ Alto</span>'
+              if level == 'medium':
                   return '<span class="badge text-bg-info">ℹ️ Medio</span>'
               return '<span class="badge text-bg-secondary">✅ Bajo</span>'
 
           def render_rows(items):
-              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Riesgo</th><th>Estado</th><th>Labels</th><th>Creado</th></tr></thead><tbody>')
+              html.append('<div class="table-responsive">')
+              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th data-sort="num">PR</th><th data-sort="name">Paquete</th><th data-sort="from">Desde</th><th data-sort="to">Hasta</th><th data-sort="dir">Dir</th><th data-sort="eco">Eco</th><th data-sort="risk">Riesgo</th><th data-sort="state">Estado</th><th data-sort="labels">Labels</th><th data-sort="created">Creado</th></tr></thead><tbody>')
               for r in items:
                   st = current_state_for(r)
                   typ = 'other'
@@ -1077,20 +1105,23 @@ jobs:
                       typ = 'other'
                   age = age_days(r.get('created_iso',''))
                   labels_html = label_tags(r.get('labels_list',[])) if r.get('labels_list') is not None else r.get('labels','—')
+                  risklev = risk_level(typ, age, r.get('labels_list',[]))
                   html.append(
-                      f'<tr>'
-                      f'<td><a href="{r["url"]}" target="_blank" rel="noopener">#{r["num"]}</a></td>'
-                      f'<td>{r["name"]}</td>'
-                      f'<td>{badge_for(r.get("from",""), typ, "from")}</td>'
-                      f'<td>{badge_for(r.get("to",""), typ, "to")}</td>'
-                      f'<td>{dir_cell_html(r.get("dir","/"))}</td>'
-                      f'<td>{risk_badge(typ, age, r.get("labels_list",[]))}</td>'
-                      f'<td>{st}</td>'
-                      f'<td>{labels_html}</td>'
-                      f'<td>{r["created"]}</td>'
-                      f'</tr>'
+                      f'<tr data-num="{r["num"]}" data-name="{r["name"]}" data-from="{r.get("from","")}" data-to="{r.get("to","")}" data-dir="{r.get("dir","/")}" data-eco="{r.get("eco","unknown")}" data-type="{typ}" data-risk="{risklev}" data-state="{st}" data-created="{r["created"]}">' 
+                        f'<td><a href="{r["url"]}" target="_blank" rel="noopener">#{r["num"]}</a></td>'
+                        f'<td>{r["name"]}</td>'
+                        f'<td>{badge_for(r.get("from",""), typ, "from")}</td>'
+                        f'<td>{badge_for(r.get("to",""), typ, "to")}</td>'
+                        f'<td>{dir_cell_html(r.get("dir","/"))}</td>'
+                        f'<td><code>{r.get("eco","unknown")}</code></td>'
+                        f'<td>{risk_badge(risklev)}</td>'
+                        f'<td>{st}</td>'
+                        f'<td>{labels_html}</td>'
+                        f'<td>{r["created"]}</td>'
+                        f'</tr>'
                   )
               html.append('</tbody></table>')
+              html.append('</div>')
 
           html.append('<div class="accordion-item">')
           html.append('<h2 class="accordion-header" id="headingOpen">')
@@ -1187,7 +1218,42 @@ jobs:
           html.append('</div>')
           html.append('<button id="toTop" class="btn btn-primary btn-lg rounded-circle shadow" aria-label="Ir arriba">⬆️</button>')
           html.append('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>')
-          html.append('<script>const b=document.getElementById("toTop");window.addEventListener("scroll",()=>{b.style.display=window.scrollY>200?"block":"none"});b.addEventListener("click",()=>{window.scrollTo({top:0,behavior:"smooth"})});</script>')
+          html.append('<script>\n' 
+            'const b=document.getElementById("toTop");\n' 
+            'window.addEventListener("scroll",()=>{b.style.display=window.scrollY>200?"block":"none";const h=document.documentElement;const p=(h.scrollTop)/(h.scrollHeight-h.clientHeight)*100;document.getElementById("scrollBar").style.width=p+"%"});\n' 
+            'b.addEventListener("click",()=>{window.scrollTo({top:0,behavior:"smooth"})});\n' 
+            'const prData = ' + json.dumps(rows) + ';\n' 
+            'const dirAgg = ' + json.dumps({k:dir_agg[k] for k in dir_agg}) + ';\n' 
+            'const ecoAgg = ' + json.dumps({k:eco_agg[k] for k in eco_agg}) + ';\n' 
+            'const repo = ' + json.dumps(repo) + ';\n' 
+            'function makeChips(containerId, values,label){const c=document.getElementById(containerId);c.innerHTML=`<span class="fw-bold me-2">${label}:</span>`;values.forEach(v=>{const s=document.createElement("span");s.className="chip";s.textContent=v;s.dataset.value=v;s.addEventListener("click",()=>{s.classList.toggle("active");applyFilters();});c.appendChild(s);});} \n' 
+            'makeChips("dirChips", Object.keys(dirAgg), "Dir");\n' 
+            'makeChips("ecoChips", Object.keys(ecoAgg), "Eco");\n' 
+            'makeChips("typeChips", ["major","minor","patch","other"], "Tipo");\n' 
+            'makeChips("riskChips", ["critical","high","medium","low"], "Riesgo");\n' 
+            'makeChips("stateChips", ["open","merged","closed"], "Estado");\n' 
+            'document.getElementById("searchInput").addEventListener("input",applyFilters);\n' 
+            'function applyFilters(){const q=document.getElementById("searchInput").value.toLowerCase();const dirSel=[...document.querySelectorAll("#dirChips .chip.active")].map(x=>x.dataset.value);const ecoSel=[...document.querySelectorAll("#ecoChips .chip.active")].map(x=>x.dataset.value);const typeSel=[...document.querySelectorAll("#typeChips .chip.active")].map(x=>x.dataset.value);const riskSel=[...document.querySelectorAll("#riskChips .chip.active")].map(x=>x.dataset.value);const stateSel=[...document.querySelectorAll("#stateChips .chip.active")].map(x=>x.dataset.value);document.querySelectorAll("table tbody tr").forEach(tr=>{let t=true;const text=tr.textContent.toLowerCase();if(q && !text.includes(q)) t=false;const d=tr.getAttribute("data-dir");const e=tr.getAttribute("data-eco");const tp=tr.getAttribute("data-type");const rk=tr.getAttribute("data-risk");const st=tr.getAttribute("data-state");if(dirSel.length && !dirSel.includes(d)) t=false; if(ecoSel.length && !ecoSel.includes(e)) t=false; if(typeSel.length && !typeSel.includes(tp)) t=false; if(riskSel.length && !riskSel.includes(rk)) t=false; if(stateSel.length && !stateSel.includes(st)) t=false; tr.style.display=t?"":"none";});} \n' 
+            'const root=document.documentElement;const stored=localStorage.getItem("theme")||"light";root.setAttribute("data-bs-theme",stored);const toggle=document.getElementById("themeToggle");toggle.checked=(stored==="dark");applyThemeToCharts();toggle.addEventListener("change",()=>{const th=toggle.checked?"dark":"light";root.setAttribute("data-bs-theme",th);localStorage.setItem("theme",th);applyThemeToCharts();});\n' 
+            'document.querySelectorAll("table thead th[data-sort]").forEach(th=>{th.style.cursor="pointer";th.addEventListener("click",()=>{const key=th.dataset.sort;const table=th.closest("table");const rows=[...table.tBodies[0].rows];const asc=th.dataset.order!="desc";rows.sort((a,b)=>{const va=a.getAttribute("data-"+key)||a.cells[th.cellIndex].innerText;const vb=b.getAttribute("data-"+key)||b.cells[th.cellIndex].innerText;return asc?va.localeCompare(vb):vb.localeCompare(va);});rows.forEach(r=>table.tBodies[0].appendChild(r));th.dataset.order=asc?"desc":"asc";});});\n' 
+            'function toCsv(items){const headers=["num","name","from","to","dir","eco","state","created"];const escape=v=>`"${String(v).replaceAll("\"","\"\"")}"`;const lines=[headers.join(",")];items.forEach(r=>{lines.push([r.num,r.name,r.from,r.to,r.dir,r.eco||"unknown",r.state,r.created].map(escape).join(","));});return lines.join("\n");} \n' 
+            'document.getElementById("btnCsv").addEventListener("click",()=>{const blob=new Blob([toCsv(prData)],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="dependabot-report.csv";a.click();});\n' 
+            'document.getElementById("btnCopy").addEventListener("click",()=>{\n' 
+            '  const typeSel=[...document.querySelectorAll("#typeChips .chip.active")].map(x=>x.dataset.value);\n' 
+            '  const riskSel=[...document.querySelectorAll("#riskChips .chip.active")].map(x=>x.dataset.value);\n' 
+            '  const stateSel=[...document.querySelectorAll("#stateChips .chip.active")].map(x=>x.dataset.value);\n' 
+            '  let q=`is:pr author:app/dependabot repo:${repo}`;\n' 
+            '  if(stateSel.length===1){q+=` is:${stateSel[0]}`;}\n' 
+            '  if(typeSel.length===1){const m={major:"semver-major",minor:"semver-minor",patch:"semver-patch"}[typeSel[0]];if(m) q+=` label:${m}`;}\n' 
+            '  if(riskSel.length){q+=" label:security";}\n' 
+            '  navigator.clipboard.writeText(`https://github.com/search?q=${encodeURIComponent(q)}`);\n' 
+            '});\n' 
+            'function cssColors(){const s=getComputedStyle(document.documentElement);return {text:s.getPropertyValue("--bs-body-color").trim()||"#212529",grid:s.getPropertyValue("--bs-border-color").trim()||"#dee2e6"};} \n' 
+            'let cc=cssColors();\n' 
+            'const chartTypes = new Chart(document.getElementById("chartTypes"),{type:"bar",data:{labels:["major","minor","patch","other"],datasets:[{label:"Tipos",data:[' + ','.join(str(total_agg[k]) for k in ['major','minor','patch','other']) + '],backgroundColor:["#dc3545","#ffc107","#198754","#6c757d"]}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:cc.text},grid:{color:cc.grid}},y:{ticks:{color:cc.text},grid:{color:cc.grid}}}});\n' 
+            'const chartEcos = new Chart(document.getElementById("chartEcos"),{type:"doughnut",data:{labels:' + json.dumps(sorted(list(eco_agg.keys()))) + ',datasets:[{data:' + json.dumps([eco_agg[e]['major']+eco_agg[e]['minor']+eco_agg[e]['patch']+eco_agg[e]['other'] for e in sorted(eco_agg.keys())]) + ',backgroundColor:["#0d6efd","#6610f2","#6f42c1","#20c997","#fd7e14","#198754","#dc3545","#6c757d"]}]},options:{responsive:true,plugins:{legend:{labels:{color:cc.text}}}});\n' 
+            'function applyThemeToCharts(){cc=cssColors();chartTypes.options.scales.x.ticks.color=cc.text;chartTypes.options.scales.x.grid.color=cc.grid;chartTypes.options.scales.y.ticks.color=cc.text;chartTypes.options.scales.y.grid.color=cc.grid;chartTypes.update();chartEcos.options.plugins.legend.labels.color=cc.text;chartEcos.update();} \n' 
+          '</script>')
           html.append('</body></html>')
           with open(html_path,'w',encoding='utf-8') as f:
               f.write(''.join(html))
