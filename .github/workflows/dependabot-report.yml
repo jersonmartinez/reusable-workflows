@@ -613,6 +613,7 @@ jobs:
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
           PDF_PATH: docs/${{ inputs.pdf_report_name }}
           REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 -m pip install --user reportlab || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
@@ -707,6 +708,8 @@ jobs:
           total_agg = {'major':0,'minor':0,'patch':0,'other':0}
           dir_agg = {}
           eco_agg = {}
+          server_url = os.getenv('GITHUB_SERVER_URL','https://github.com')
+          repo_url = os.getenv('GITHUB_REPOSITORY','')
           for pr in prs:
               meta = parse_title(pr.get('title',''))
               typ = update_type(meta.get('from',''), meta.get('to',''))
@@ -726,19 +729,27 @@ jobs:
           flow.append(Paragraph('4. Listado de PRs', styles['Normal']))
           flow.append(Spacer(1,12))
 
-          flow.append(Paragraph('Resumen general', styles['Heading2']))
+          flow.append(Paragraph('📊 Resumen general', styles['Heading2']))
           flow.append(Spacer(1,6))
           data_summary = [['Tipo','Cantidad'],['major',total_agg['major']],['minor',total_agg['minor']],['patch',total_agg['patch']],['other',total_agg['other']]]
           tbl_sum = Table(data_summary, repeatRows=1)
           tbl_sum.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
           flow.append(tbl_sum)
+          flow.append(Spacer(1,6))
+          flow.append(Paragraph("Tipos basados en <link href='https://semver.org/'>SemVer</link>: 🔺 major • 🟡 minor • 🟢 patch • 🔹 other", styles['Italic']))
           flow.append(Spacer(1,12))
 
           flow.append(Paragraph('Métricas por directorio', styles['Heading2']))
           flow.append(Spacer(1,6))
+          from reportlab.platypus import Paragraph
           data_dir = [['Directorio','major','minor','patch','other']]
           for d in sorted(dir_agg.keys()):
-              row = [d, dir_agg[d]['major'], dir_agg[d]['minor'], dir_agg[d]['patch'], dir_agg[d]['other']]
+              if d and d.startswith('/'):
+                  href = f"{server_url}/{repo_url}/tree/main" + ('' if d == '/' else d)
+                  d_cell = Paragraph(f"<link href='{href}'>{d}</link>", styles['Normal'])
+              else:
+                  d_cell = Paragraph(d or '/', styles['Normal'])
+              row = [d_cell, dir_agg[d]['major'], dir_agg[d]['minor'], dir_agg[d]['patch'], dir_agg[d]['other']]
               data_dir.append(row)
           tbl_dir = Table(data_dir, repeatRows=1)
           tbl_dir.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
@@ -756,8 +767,46 @@ jobs:
           flow.append(tbl_eco)
           flow.append(Spacer(1,12))
 
+          # Alertas de seguridad (Dependabot)
+          alerts = []
+          severity_agg = {}
+          repo = os.getenv('REPO','')
+          try:
+              import json as _j
+              r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
+              alerts = _j.loads(r)
+          except Exception:
+              alerts = []
+          for a in alerts:
+              s = (a.get('severity','') or 'unknown').lower()
+              severity_agg[s] = severity_agg.get(s,0)+1
+
+          if alerts:
+              flow.append(Paragraph('🛡️ Alertas de Seguridad (abiertas)', styles['Heading2']))
+              flow.append(Spacer(1,6))
+              data_sec = [['Severidad','Cantidad']]
+              for k in ['critical','high','moderate','low','unknown']:
+                  if k in severity_agg:
+                      data_sec.append([k, severity_agg[k]])
+              tbl_sec = Table(data_sec, repeatRows=1)
+              tbl_sec.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+              flow.append(tbl_sec)
+              flow.append(Spacer(1,6))
+              data_alerts = [['Paquete','Severidad','Ecosistema','Manifest']]
+              for a in alerts[:20]:
+                  pkg = (a.get('dependency','') or {}).get('package','') or a.get('package','') or '—'
+                  sev = a.get('severity','') or 'unknown'
+                  eco = (a.get('package','') or {}).get('ecosystem','') or (a.get('dependency','') or {}).get('package','')
+                  manifest = a.get('manifest_path','') or '—'
+                  data_alerts.append([pkg, sev, eco or '—', manifest])
+              tbl_alerts = Table(data_alerts, repeatRows=1)
+              tbl_alerts.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+              flow.append(tbl_alerts)
+              flow.append(Spacer(1,12))
+
           flow.append(Paragraph('Listado de PRs', styles['Heading2']))
           flow.append(Spacer(1,6))
+          from urllib.parse import quote_plus
           data = [['PR','Paquete','Desde','Hasta','Dir','Estado','Labels','Creado']]
           for pr in prs:
               num = pr.get('number','')
@@ -768,10 +817,23 @@ jobs:
                   created_fmt = datetime.fromisoformat(created.replace('Z','+00:00')).strftime('%Y-%m-%d')
               except Exception:
                   created_fmt = 'N/A'
-              labels = ', '.join([l.get('name','') for l in pr.get('labels',[])]) or '—'
+              labels_list = pr.get('labels',[])
+              labels_html = ' '.join([f"<link href='{server_url}/{repo_url}/pulls?q=is%3Apr+label%3A{quote_plus(l.get('name',''))}+author%3Aapp%2Fdependabot'>{l.get('name','')}</link>" for l in labels_list if l.get('name','')]) or '—'
               state = pr.get('state','open')
               d = meta.get('dir') or directory_of(pr)
-              data.append([f"#{num}", meta['name'], meta['from'], meta['to'], d, state, labels, created_fmt])
+              typ = 'other'
+              try:
+                  if meta and meta.get('from') and meta.get('to'):
+                      typ = update_type(meta.get('from',''), meta.get('to',''))
+              except Exception:
+                  typ = 'other'
+              emoji = {'major':'🔺','minor':'🟡','patch':'🟢','other':'🔹'}.get(typ,'🔹')
+              from_badge = Paragraph(f"↩️ {meta.get('from','')}", styles['Normal'])
+              to_badge = Paragraph(f"{emoji} {meta.get('to','')}", styles['Normal'])
+              dir_cell = Paragraph(f"<link href='{server_url}/{repo_url}/tree/main" + ('' if d == '/' else d) + f"'>{d}</link>", styles['Normal']) if (d and d.startswith('/')) else Paragraph(d or '/', styles['Normal'])
+              labels_cell = Paragraph(labels_html, styles['Normal'])
+              pr_cell = Paragraph(f"<link href='{server_url}/{repo_url}/pull/{num}'>#{num}</link>", styles['Normal'])
+              data.append([pr_cell, meta.get('name','—'), from_badge, to_badge, dir_cell, state, labels_cell, created_fmt])
           table = Table(data, repeatRows=1)
           table.setStyle(TableStyle([
               ('BACKGROUND',(0,0),(-1,0),colors.lightgrey),
@@ -881,26 +943,34 @@ jobs:
                   created_fmt = datetime.fromisoformat(created.replace('Z','+00:00')).strftime('%Y-%m-%d')
               except Exception:
                   created_fmt = 'N/A'
-              rows.append({'num': pr.get('number',''), 'name': meta['name'], 'from': meta['from'], 'to': meta['to'], 'dir': d, 'state': pr.get('state','open'), 'labels': labels, 'created': created_fmt, 'url': pr.get('url','#')})
+              rows.append({'num': pr.get('number',''), 'name': meta['name'], 'from': meta['from'], 'to': meta['to'], 'dir': d, 'state': pr.get('state','open'), 'labels': labels, 'labels_list': pr.get('labels',[]), 'created': created_fmt, 'created_iso': created, 'url': pr.get('url','#')})
           ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
           repo = os.getenv('GITHUB_REPOSITORY','')
+          server_url = os.getenv('GITHUB_SERVER_URL','https://github.com')
           html = []
           html.append('<!doctype html><html><head><meta charset="utf-8"><title>Reporte Dependabot</title>')
           html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
           html.append('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">')
+          html.append('<style>#toTop{position:fixed;bottom:20px;right:20px;z-index:9999;display:none} .badge-ver{font-size:0.85rem} .section-card{border:1px solid #e5e7eb;border-radius:.5rem;padding:1rem;margin-bottom:1rem}</style>')
           html.append('</head><body>')
           html.append('<div class="container my-4">')
           html.append(f'<h1 class="mb-3">Reporte Dependabot</h1><p class="text-muted">Generado: {ts}</p>')
-          html.append('<h2 id="resumen" class="mt-4">Resumen general</h2>')
+          html.append('<h2 id="resumen" class="mt-4">📊 Resumen general</h2>')
           html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Tipo</th><th>Cantidad</th></tr></thead><tbody>')
           for k in ['major','minor','patch','other']:
               html.append(f'<tr><td>{k}</td><td>{total_agg[k]}</td></tr>')
           html.append('</tbody></table>')
+          html.append('<div class="alert alert-info" role="alert">🔎 Tipos basados en <a href="https://semver.org/" target="_blank" rel="noopener">SemVer</a>: 🔺 major • 🟡 minor • 🟢 patch • 🔹 other</div>')
           html.append('<h2 id="dir" class="mt-4">Métricas por directorio</h2>')
           html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Directorio</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
           for d in sorted(dir_agg.keys()):
               v = dir_agg[d]
-              html.append(f'<tr><td>{d}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
+              if d and d.startswith('/'):
+                  href = f'{server_url}/{repo}/tree/main' + ('' if d == '/' else d)
+                  cell = f'<a href="{href}" target="_blank" rel="noopener"><code>{d}</code></a>'
+              else:
+                  cell = f'<code>{d}</code>'
+              html.append(f'<tr><td>{cell}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
           html.append('<h2 id="eco" class="mt-4">Métricas por ecosistema</h2>')
           html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
@@ -935,11 +1005,85 @@ jobs:
           html.append('<h2 id="listado" class="mt-4">PRs por estado</h2>')
           html.append('<div class="accordion" id="prAccordion">')
 
+          from urllib.parse import quote_plus
+          def badge_for(ver, typ, kind):
+              emoji = {'major':'🔺','minor':'🟡','patch':'🟢','other':'🔹'}.get(typ,'🔹')
+              color = {'major':'danger','minor':'warning','patch':'success','other':'secondary'}.get(typ,'secondary')
+              if kind == 'from':
+                  return f'<span class="badge text-bg-secondary badge-ver">↩️ {ver}</span>'
+              return f'<span class="badge text-bg-{color} badge-ver">{emoji} {ver}</span>'
+
+          def label_tags(labels):
+              if not labels:
+                  return '—'
+              parts = []
+              for l in labels:
+                  name = l.get('name','')
+                  if not name:
+                      continue
+                  color = l.get('color','0d6efd')
+                  href = f"{server_url}/{repo}/pulls?q=is%3Apr+label%3A{quote_plus(name)}+author%3Aapp%2Fdependabot"
+                  parts.append(f'<a href="{href}" target="_blank" rel="noopener" class="badge rounded-pill" style="background-color: #{color}; color: #fff;">{name}</a>')
+              return ' '.join(parts) or '—'
+
+          def dir_cell_html(d):
+              if d and d.startswith('/'):
+                  href = f'{server_url}/{repo}/tree/main' + ('' if d == '/' else d)
+                  return f'<a href="{href}" target="_blank" rel="noopener"><code>{d}</code></a>'
+              return f'<code>{d}</code>'
+
+          def age_days(iso):
+              try:
+                  from datetime import datetime, timezone
+                  dt = datetime.fromisoformat((iso or '').replace('Z','+00:00'))
+                  now = datetime.now(timezone.utc)
+                  return (now - dt).days
+              except Exception:
+                  return None
+
+          def risk_badge(typ, age, labels):
+              base = {'major':3,'minor':2,'patch':1,'other':1}.get(typ,'1')
+              extra = 0
+              if isinstance(age,int) and age >= 60:
+                  extra = 2
+              elif isinstance(age,int) and age >= 30:
+                  extra = 1
+              has_sec = any((l.get('name','').lower().find('sec') >= 0) for l in (labels or []))
+              if has_sec:
+                  extra += 1
+              score = base + extra
+              if score >= 5:
+                  return '<span class="badge text-bg-danger">🔥 Crítico</span>'
+              if score >= 4:
+                  return '<span class="badge text-bg-warning">⚠️ Alto</span>'
+              if score >= 3:
+                  return '<span class="badge text-bg-info">ℹ️ Medio</span>'
+              return '<span class="badge text-bg-secondary">✅ Bajo</span>'
+
           def render_rows(items):
-              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Estado</th><th>Labels</th><th>Creado</th></tr></thead><tbody>')
+              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Riesgo</th><th>Estado</th><th>Labels</th><th>Creado</th></tr></thead><tbody>')
               for r in items:
                   st = current_state_for(r)
-                  html.append(f'<tr><td><a href="{r["url"]}">#{r["num"]}</a></td><td>{r["name"]}</td><td>{r["from"]}</td><td>{r["to"]}</td><td>{r["dir"]}</td><td>{st}</td><td>{r["labels"]}</td><td>{r["created"]}</td></tr>')
+                  typ = 'other'
+                  try:
+                      typ = update_type(r.get('from',''), r.get('to','')) if r.get('from') and r.get('to') else 'other'
+                  except Exception:
+                      typ = 'other'
+                  age = age_days(r.get('created_iso',''))
+                  labels_html = label_tags(r.get('labels_list',[])) if r.get('labels_list') is not None else r.get('labels','—')
+                  html.append(
+                      f'<tr>'
+                      f'<td><a href="{r["url"]}" target="_blank" rel="noopener">#{r["num"]}</a></td>'
+                      f'<td>{r["name"]}</td>'
+                      f'<td>{badge_for(r.get("from",""), typ, "from")}</td>'
+                      f'<td>{badge_for(r.get("to",""), typ, "to")}</td>'
+                      f'<td>{dir_cell_html(r.get("dir","/"))}</td>'
+                      f'<td>{risk_badge(typ, age, r.get("labels_list",[]))}</td>'
+                      f'<td>{st}</td>'
+                      f'<td>{labels_html}</td>'
+                      f'<td>{r["created"]}</td>'
+                      f'</tr>'
+                  )
               html.append('</tbody></table>')
 
           html.append('<div class="accordion-item">')
@@ -967,8 +1111,70 @@ jobs:
           html.append('</div></div></div>')
 
           html.append('</div>')
+          html.append('<h2 class="mt-4">ℹ️ Información relevante</h2>')
+          html.append('<div class="row">')
+          html.append('<div class="col-md-6"><div class="section-card">')
+          html.append(f'<p>🔓 Abiertos: <b>{len(open_rows)}</b> • <a href="{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot" target="_blank" rel="noopener">ver búsqueda</a></p>')
+          html.append(f'<p>✅ Fusionados: <b>{len(merged_rows)}</b> • <a href="{server_url}/{repo}/pulls?q=is%3Apr+is%3Amerged+author%3Aapp%2Fdependabot" target="_blank" rel="noopener">ver búsqueda</a></p>')
+          html.append(f'<p>❌ Cerrados: <b>{len(closed_rows)}</b> • <a href="{server_url}/{repo}/pulls?q=is%3Apr+is%3Aclosed+author%3Aapp%2Fdependabot" target="_blank" rel="noopener">ver búsqueda</a></p>')
+          html.append('</div></div>')
+          html.append('<div class="col-md-6"><div class="section-card">')
+          html.append('<p>📁 Rutas de repositorio:</p><ul class="list-group">')
+          for d in sorted(dir_agg.keys()):
+              if d and d.startswith('/'):
+                  href = f'{server_url}/{repo}/tree/main' + ('' if d == '/' else d)
+                  html.append(f'<li class="list-group-item"><a href="{href}" target="_blank" rel="noopener"><code>{d}</code></a></li>')
+              else:
+                  html.append(f'<li class="list-group-item"><code>{d}</code></li>')
+          html.append('</ul></div></div>')
           html.append('</div>')
+
+          html.append('<h2 class="mt-4">🛡️ Alertas de Seguridad</h2>')
+          try:
+              import json as _j
+              r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
+              alerts = _j.loads(r)
+          except Exception:
+              alerts = []
+          if alerts:
+              sev_agg = {}
+              for a in alerts:
+                  s = (a.get('severity','') or 'unknown').lower()
+                  sev_agg[s] = sev_agg.get(s,0)+1
+              html.append('<div class="row">')
+              html.append('<div class="col-md-4">')
+              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Severidad</th><th>Cantidad</th></tr></thead><tbody>')
+              for k in ['critical','high','moderate','low','unknown']:
+                  if k in sev_agg:
+                      html.append(f'<tr><td>{k}</td><td>{sev_agg[k]}</td></tr>')
+              html.append('</tbody></table>')
+              html.append('</div>')
+              html.append('<div class="col-md-8">')
+              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Paquete</th><th>Severidad</th><th>Ecosistema</th><th>Manifest</th><th>Referencia</th></tr></thead><tbody>')
+              for a in alerts[:20]:
+                  pkg = (a.get('dependency','') or {}).get('package','') or a.get('package','') or '—'
+                  sev = a.get('severity','') or 'unknown'
+                  eco = (a.get('package','') or {}).get('ecosystem','') or (a.get('dependency','') or {}).get('package','')
+                  manifest = a.get('manifest_path','') or '—'
+                  ghsa = ((a.get('security_advisory','') or {}).get('ghsa_id','') or a.get('ghsa_id',''))
+                  cve = ((a.get('security_advisory','') or {}).get('cve_id','') or a.get('cve_id',''))
+                  ref = ''
+                  if ghsa:
+                      ref = f'<a href="https://github.com/advisories/{ghsa}" target="_blank" rel="noopener">{ghsa}</a>'
+                  elif cve:
+                      ref = f'<a href="https://nvd.nist.gov/vuln/detail/{cve}" target="_blank" rel="noopener">{cve}</a>'
+                  else:
+                      ref = '—'
+                  html.append(f'<tr><td>{pkg}</td><td>{sev}</td><td>{eco or "—"}</td><td><code>{manifest}</code></td><td>{ref}</td></tr>')
+              html.append('</tbody></table>')
+              html.append('</div>')
+              html.append('</div>')
+          else:
+              html.append('<div class="alert alert-success" role="alert">No se detectaron alertas abiertas de Dependabot o no hay permisos para leerlas.</div>')
+          html.append('</div>')
+          html.append('<button id="toTop" class="btn btn-primary btn-lg rounded-circle shadow" aria-label="Ir arriba">⬆️</button>')
           html.append('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>')
+          html.append('<script>const b=document.getElementById("toTop");window.addEventListener("scroll",()=>{b.style.display=window.scrollY>200?"block":"none"});b.addEventListener("click",()=>{window.scrollTo({top:0,behavior:"smooth"})});</script>')
           html.append('</body></html>')
           with open(html_path,'w',encoding='utf-8') as f:
               f.write(''.join(html))
