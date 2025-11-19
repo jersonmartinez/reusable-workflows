@@ -795,6 +795,7 @@ jobs:
         if: ${{ inputs.generate_html_report }}
         env:
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
+          GH_TOKEN: ${{ github.token }}
           HTML_PATH: docs/${{ inputs.html_report_name }}
         run: |
           python3 - << 'PY'
@@ -882,32 +883,92 @@ jobs:
                   created_fmt = 'N/A'
               rows.append({'num': pr.get('number',''), 'name': meta['name'], 'from': meta['from'], 'to': meta['to'], 'dir': d, 'state': pr.get('state','open'), 'labels': labels, 'created': created_fmt, 'url': pr.get('url','#')})
           ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+          repo = os.getenv('GITHUB_REPOSITORY','')
           html = []
-          html.append('<!doctype html><html><head><meta charset="utf-8"><title>Reporte Dependabot</title><style>body{font-family:Arial,sans-serif;padding:20px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px}th{background:#f2f2f2}</style></head><body>')
-          html.append(f'<h1>Reporte Dependabot</h1><p>Generado: {ts}</p>')
-          html.append('<h2>Índice</h2><ol><li><a href="#resumen">Resumen general</a></li><li><a href="#dir">Métricas por directorio</a></li><li><a href="#eco">Métricas por ecosistema</a></li><li><a href="#listado">Listado de PRs</a></li></ol>')
-          html.append('<h2 id="resumen">Resumen general</h2>')
-          html.append('<table><thead><tr><th>Tipo</th><th>Cantidad</th></tr></thead><tbody>')
+          html.append('<!doctype html><html><head><meta charset="utf-8"><title>Reporte Dependabot</title>')
+          html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
+          html.append('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">')
+          html.append('</head><body>')
+          html.append('<div class="container my-4">')
+          html.append(f'<h1 class="mb-3">Reporte Dependabot</h1><p class="text-muted">Generado: {ts}</p>')
+          html.append('<h2 id="resumen" class="mt-4">Resumen general</h2>')
+          html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Tipo</th><th>Cantidad</th></tr></thead><tbody>')
           for k in ['major','minor','patch','other']:
               html.append(f'<tr><td>{k}</td><td>{total_agg[k]}</td></tr>')
           html.append('</tbody></table>')
-          html.append('<h2 id="dir">Métricas por directorio</h2>')
-          html.append('<table><thead><tr><th>Directorio</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
+          html.append('<h2 id="dir" class="mt-4">Métricas por directorio</h2>')
+          html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Directorio</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
           for d in sorted(dir_agg.keys()):
               v = dir_agg[d]
               html.append(f'<tr><td>{d}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
-          html.append('<h2 id="eco">Métricas por ecosistema</h2>')
-          html.append('<table><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
+          html.append('<h2 id="eco" class="mt-4">Métricas por ecosistema</h2>')
+          html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
           for e in sorted(eco_agg.keys()):
               v = eco_agg[e]
               html.append(f'<tr><td>{e}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
-          html.append('<h2 id="listado">Listado de PRs</h2>')
-          html.append('<table><thead><tr><th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Estado</th><th>Labels</th><th>Creado</th></tr></thead><tbody>')
+
+          def current_state_for(pr):
+              st = (pr.get('state','open') or '').lower()
+              if st != 'closed':
+                  return st
+              num = pr.get('number')
+              try:
+                  r = os.popen(f"gh api repos/{repo}/pulls/{num}").read()
+                  data = json.loads(r)
+                  merged_at = data.get('merged_at')
+                  return 'merged' if merged_at else 'closed'
+              except Exception:
+                  return 'closed'
+
+          open_rows, merged_rows, closed_rows = [], [], []
           for r in rows:
-              html.append(f'<tr><td><a href="{r["url"]}">#{r["num"]}</a></td><td>{r["name"]}</td><td>{r["from"]}</td><td>{r["to"]}</td><td>{r["dir"]}</td><td>{r["state"]}</td><td>{r["labels"]}</td><td>{r["created"]}</td></tr>')
-          html.append('</tbody></table>')
+              st = current_state_for(r)
+              if st == 'open':
+                  open_rows.append(r)
+              elif st == 'merged':
+                  merged_rows.append(r)
+              elif st == 'closed':
+                  closed_rows.append(r)
+
+          html.append('<h2 id="listado" class="mt-4">PRs por estado</h2>')
+          html.append('<div class="accordion" id="prAccordion">')
+
+          def render_rows(items):
+              html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Estado</th><th>Labels</th><th>Creado</th></tr></thead><tbody>')
+              for r in items:
+                  st = current_state_for(r)
+                  html.append(f'<tr><td><a href="{r["url"]}">#{r["num"]}</a></td><td>{r["name"]}</td><td>{r["from"]}</td><td>{r["to"]}</td><td>{r["dir"]}</td><td>{st}</td><td>{r["labels"]}</td><td>{r["created"]}</td></tr>')
+              html.append('</tbody></table>')
+
+          html.append('<div class="accordion-item">')
+          html.append('<h2 class="accordion-header" id="headingOpen">')
+          html.append(f'<button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOpen" aria-expanded="true" aria-controls="collapseOpen">PRs Abiertos ({len(open_rows)})</button>')
+          html.append('</h2>')
+          html.append('<div id="collapseOpen" class="accordion-collapse collapse show" aria-labelledby="headingOpen" data-bs-parent="#prAccordion"><div class="accordion-body">')
+          render_rows(open_rows)
+          html.append('</div></div></div>')
+
+          html.append('<div class="accordion-item">')
+          html.append('<h2 class="accordion-header" id="headingMerged">')
+          html.append(f'<button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMerged" aria-expanded="false" aria-controls="collapseMerged">PRs Fusionados ({len(merged_rows)})</button>')
+          html.append('</h2>')
+          html.append('<div id="collapseMerged" class="accordion-collapse collapse" aria-labelledby="headingMerged" data-bs-parent="#prAccordion"><div class="accordion-body">')
+          render_rows(merged_rows)
+          html.append('</div></div></div>')
+
+          html.append('<div class="accordion-item">')
+          html.append('<h2 class="accordion-header" id="headingClosed">')
+          html.append(f'<button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseClosed" aria-expanded="false" aria-controls="collapseClosed">PRs Cerrados ({len(closed_rows)})</button>')
+          html.append('</h2>')
+          html.append('<div id="collapseClosed" class="accordion-collapse collapse" aria-labelledby="headingClosed" data-bs-parent="#prAccordion"><div class="accordion-body">')
+          render_rows(closed_rows)
+          html.append('</div></div></div>')
+
+          html.append('</div>')
+          html.append('</div>')
+          html.append('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>')
           html.append('</body></html>')
           with open(html_path,'w',encoding='utf-8') as f:
               f.write(''.join(html))
@@ -1162,35 +1223,58 @@ jobs:
                       agg[update_type(meta['from'], meta['to'])] += 1
 
               summary.append(f"Mostrando {len(show_list)} de {prs_count} PRs\n\n")
-              summary.append("<table>\n")
-              summary.append("<thead>\n")
-              summary.append("<tr>\n")
-              summary.append("<th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Estado</th><th>Labels</th><th>Edad</th>\n")
-              summary.append("</tr>\n")
-              summary.append("</thead>\n")
-              summary.append("<tbody>\n")
               fast = os.getenv('FAST_SUMMARY','true').lower() == 'true'
-              for pr in show_list:
-                  pr_number = pr.get('number','N/A')
-                  pr_url = pr.get('url','#')
-                  pr_title = pr.get('title','Sin título')
-                  lbl_html = label_badges(pr.get('labels',[]))
-                  created = pr.get('createdAt','')
-                  d_ago = days_ago(created)
-                  state_now = pr.get('state','open') if fast else current_state(pr_number)
-                  meta = parse_title(pr_title) or {'name':'—','from':'—','to':'—','dir':directory_of(pr)}
+
+              def state_of(pr):
+                  num = pr.get('number')
+                  return pr.get('state','open') if fast else current_state(num)
+
+              def render_table(items, title, opened):
+                  summary.append("<details open>\n" if opened else "<details>\n")
+                  summary.append(f"<summary><h2>🔄 {title} ({len(items)})</h2></summary>\n\n")
+                  summary.append("<table>\n")
+                  summary.append("<thead>\n")
                   summary.append("<tr>\n")
-                  summary.append(f"<td><a href='{pr_url}'><b>#{pr_number}</b></a></td>\n")
-                  summary.append(f"<td>{meta['name']}</td>\n")
-                  summary.append(f"<td>{meta['from']}</td>\n")
-                  summary.append(f"<td>{meta['to']}</td>\n")
-                  summary.append(f"<td><code>{meta['dir'] or '/'}</code></td>\n")
-                  summary.append(f"<td>{status_badge(state_now)}</td>\n")
-                  summary.append(f"<td>{lbl_html}</td>\n")
-                  summary.append(f"<td>{(str(d_ago)+' d') if d_ago is not None else 'N/A'}</td>\n")
+                  summary.append("<th>PR</th><th>Paquete</th><th>Desde</th><th>Hasta</th><th>Dir</th><th>Estado</th><th>Labels</th><th>Edad</th>\n")
                   summary.append("</tr>\n")
-              summary.append("</tbody>\n")
-              summary.append("</table>\n\n")
+                  summary.append("</thead>\n")
+                  summary.append("<tbody>\n")
+                  for pr in items:
+                      pr_number = pr.get('number','N/A')
+                      pr_url = pr.get('url','#')
+                      pr_title = pr.get('title','Sin título')
+                      lbl_html = label_badges(pr.get('labels',[]))
+                      created = pr.get('createdAt','')
+                      d_ago = days_ago(created)
+                      state_now = state_of(pr)
+                      meta = parse_title(pr_title) or {'name':'—','from':'—','to':'—','dir':directory_of(pr)}
+                      summary.append("<tr>\n")
+                      summary.append(f"<td><a href='{pr_url}'><b>#{pr_number}</b></a></td>\n")
+                      summary.append(f"<td>{meta['name']}</td>\n")
+                      summary.append(f"<td>{meta['from']}</td>\n")
+                      summary.append(f"<td>{meta['to']}</td>\n")
+                      summary.append(f"<td><code>{meta['dir'] or '/'}</code></td>\n")
+                      summary.append(f"<td>{status_badge(state_now)}</td>\n")
+                      summary.append(f"<td>{lbl_html}</td>\n")
+                      summary.append(f"<td>{(str(d_ago)+' d') if d_ago is not None else 'N/A'}</td>\n")
+                      summary.append("</tr>\n")
+                  summary.append("</tbody>\n")
+                  summary.append("</table>\n\n")
+                  summary.append("</details>\n\n")
+
+              open_items, merged_items, closed_items = [], [], []
+              for pr in show_list:
+                  st = state_of(pr)
+                  if st == 'open':
+                      open_items.append(pr)
+                  elif st == 'merged':
+                      merged_items.append(pr)
+                  elif st == 'closed':
+                      closed_items.append(pr)
+
+              render_table(open_items, 'Abiertos', True)
+              render_table(merged_items, 'Fusionados', False)
+              render_table(closed_items, 'Cerrados', False)
 
               if prs_count > len(show_list):
                   prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot"
