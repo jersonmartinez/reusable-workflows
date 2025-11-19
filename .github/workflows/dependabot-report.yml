@@ -774,12 +774,14 @@ jobs:
           try:
               import json as _j
               r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
-              alerts = _j.loads(r)
+              _tmp = _j.loads(r)
+              alerts = _tmp if isinstance(_tmp, list) else []
           except Exception:
               alerts = []
           for a in alerts:
-              s = (a.get('severity','') or 'unknown').lower()
-              severity_agg[s] = severity_agg.get(s,0)+1
+              if isinstance(a, dict):
+                  s = (a.get('severity','') or 'unknown').lower()
+                  severity_agg[s] = severity_agg.get(s,0)+1
 
           if alerts:
               flow.append(Paragraph('🛡️ Alertas de Seguridad (abiertas)', styles['Heading2']))
@@ -794,11 +796,15 @@ jobs:
               flow.append(Spacer(1,6))
               data_alerts = [['Paquete','Severidad','Ecosistema','Manifest']]
               for a in alerts[:20]:
-                  pkg = (a.get('dependency','') or {}).get('package','') or a.get('package','') or '—'
+                  if not isinstance(a, dict):
+                      continue
+                  dep = a.get('dependency') if isinstance(a.get('dependency'), dict) else {}
+                  pkg_obj = dep.get('package') if isinstance(dep.get('package'), dict) else {}
+                  pkg = pkg_obj.get('name') or '—'
                   sev = a.get('severity','') or 'unknown'
-                  eco = (a.get('package','') or {}).get('ecosystem','') or (a.get('dependency','') or {}).get('package','')
+                  eco = pkg_obj.get('ecosystem') or '—'
                   manifest = a.get('manifest_path','') or '—'
-                  data_alerts.append([pkg, sev, eco or '—', manifest])
+                  data_alerts.append([pkg, sev, eco, manifest])
               tbl_alerts = Table(data_alerts, repeatRows=1)
               tbl_alerts.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
               flow.append(tbl_alerts)
@@ -1133,14 +1139,16 @@ jobs:
           try:
               import json as _j
               r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
-              alerts = _j.loads(r)
+              _tmp = _j.loads(r)
+              alerts = _tmp if isinstance(_tmp, list) else []
           except Exception:
               alerts = []
           if alerts:
               sev_agg = {}
               for a in alerts:
-                  s = (a.get('severity','') or 'unknown').lower()
-                  sev_agg[s] = sev_agg.get(s,0)+1
+                  if isinstance(a, dict):
+                      s = (a.get('severity','') or 'unknown').lower()
+                      sev_agg[s] = sev_agg.get(s,0)+1
               html.append('<div class="row">')
               html.append('<div class="col-md-4">')
               html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Severidad</th><th>Cantidad</th></tr></thead><tbody>')
@@ -1152,12 +1160,17 @@ jobs:
               html.append('<div class="col-md-8">')
               html.append('<table class="table table-striped table-bordered table-sm"><thead><tr><th>Paquete</th><th>Severidad</th><th>Ecosistema</th><th>Manifest</th><th>Referencia</th></tr></thead><tbody>')
               for a in alerts[:20]:
-                  pkg = (a.get('dependency','') or {}).get('package','') or a.get('package','') or '—'
+                  if not isinstance(a, dict):
+                      continue
+                  dep = a.get('dependency') if isinstance(a.get('dependency'), dict) else {}
+                  pkg_obj = dep.get('package') if isinstance(dep.get('package'), dict) else {}
+                  pkg = pkg_obj.get('name') or '—'
                   sev = a.get('severity','') or 'unknown'
-                  eco = (a.get('package','') or {}).get('ecosystem','') or (a.get('dependency','') or {}).get('package','')
+                  eco = pkg_obj.get('ecosystem') or '—'
                   manifest = a.get('manifest_path','') or '—'
-                  ghsa = ((a.get('security_advisory','') or {}).get('ghsa_id','') or a.get('ghsa_id',''))
-                  cve = ((a.get('security_advisory','') or {}).get('cve_id','') or a.get('cve_id',''))
+                  adv = a.get('security_advisory') if isinstance(a.get('security_advisory'), dict) else {}
+                  ghsa = adv.get('ghsa_id','') or a.get('ghsa_id','') or ''
+                  cve = adv.get('cve_id','') or a.get('cve_id','') or ''
                   ref = ''
                   if ghsa:
                       ref = f'<a href="https://github.com/advisories/{ghsa}" target="_blank" rel="noopener">{ghsa}</a>'
@@ -1165,7 +1178,7 @@ jobs:
                       ref = f'<a href="https://nvd.nist.gov/vuln/detail/{cve}" target="_blank" rel="noopener">{cve}</a>'
                   else:
                       ref = '—'
-                  html.append(f'<tr><td>{pkg}</td><td>{sev}</td><td>{eco or "—"}</td><td><code>{manifest}</code></td><td>{ref}</td></tr>')
+                  html.append(f'<tr><td>{pkg}</td><td>{sev}</td><td>{eco}</td><td><code>{manifest}</code></td><td>{ref}</td></tr>')
               html.append('</tbody></table>')
               html.append('</div>')
               html.append('</div>')
