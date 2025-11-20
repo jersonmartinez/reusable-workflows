@@ -412,7 +412,9 @@ jobs:
             try:
               state = os.getenv('PRS_STATE','open')
               qp = [f"repo:{repo}", "is:pr", "(author:app/dependabot OR author:dependabot OR author:dependabot[bot])"]
-              if state in ('open','closed'):
+              if state == 'all':
+                qp.append("(is:open OR is:closed)")
+              elif state in ('open','closed'):
                 qp.append(f"is:{state}")
               q = " ".join(qp)
             except Exception:
@@ -440,11 +442,54 @@ jobs:
             except Exception as e:
               log(f"list_prs_search exception: {e}")
             return []
+          def list_prs_search_label_only():
+            try:
+              state = os.getenv('PRS_STATE','open')
+              qp = [f"repo:{repo}", "is:pr", "label:dependencies"]
+              if state == 'all':
+                qp.append("(is:open OR is:closed)")
+              elif state in ('open','closed'):
+                qp.append(f"is:{state}")
+              q = " ".join(qp)
+            except Exception:
+              q = ""
+            if not q:
+              return []
+            try:
+              result = subprocess.run(['gh','api','search/issues','-f',f"q={q}",'-f','per_page=100'], capture_output=True, text=True)
+              if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                items = data.get('items',[])
+                out = []
+                for it in items:
+                  out.append({
+                    'number': it.get('number'),
+                    'title': it.get('title'),
+                    'url': it.get('html_url'),
+                    'labels': it.get('labels',[]),
+                    'createdAt': it.get('created_at',''),
+                    'headRefName': '',
+                    'state': it.get('state','')
+                  })
+                return out
+              log(f"list_prs_search_label_only non-0 returncode: {result.returncode} stderr={result.stderr.strip()}")
+            except Exception as e:
+              log(f"list_prs_search_label_only exception: {e}")
+            return []
           prs = list_prs_api()
           log(f"Initial PRs count: {len(prs)}")
           if prs:
               for pr in prs:
                   log(f"PR #{pr['number']} - {pr['title']} - {pr['url']}")
+          if len(prs) == 0:
+              fb = list_prs_search()
+              if fb:
+                  prs = fb
+              else:
+                  fb2 = list_prs_search_label_only()
+                  if fb2:
+                      prs = fb2
+              log(f"Immediate fallback PRs count: {len(prs)}")
           deadline = time.time() + wait_minutes*60
           while len(prs) == 0 and time.time() < deadline:
               time.sleep(poll_interval)
@@ -454,6 +499,10 @@ jobs:
               fallback = list_prs_search()
               if fallback:
                   prs = fallback
+              else:
+                  fallback2 = list_prs_search_label_only()
+                  if fallback2:
+                      prs = fallback2
               log(f"Fallback PRs count: {len(prs)}")
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
               f.write('prs_data<<EOF\n')
@@ -2022,7 +2071,7 @@ jobs:
               render_table(closed_items, 'Cerrados', False)
 
               if prs_count > len(show_list):
-                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+is%3Aopen+author%3Aapp%2Fdependabot"
+                  prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
                   summary.append(f"> <a href='{prs_url}'>📋 <b>Ver todos los PRs ({prs_count})</b></a>\n\n")
 
               summary.append("<details>\n")
