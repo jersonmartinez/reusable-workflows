@@ -1620,10 +1620,11 @@ jobs:
           html.append('<footer class="bg-body-tertiary border-top mt-4">')
           html.append('<div class="container py-4">')
           html.append('<div class="row">')
-          html.append('<div class="col-md-3 mb-3">')
+          html.append('<div class="col-md-4 mb-3">')
           html.append('<div class="d-flex align-items-center"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2"><strong>PRB</strong></div>')
+          html.append('<div class="w-100 small text-muted mt-2">Creado con ❤️ por el equipo de DevOps</div>')
           html.append('</div>')
-          html.append('<div class="col-6 col-md-3 mb-3">')
+          html.append('<div class="col-6 col-md-4 mb-3">')
           html.append('<h6 class="fw-semibold mb-2">Reporte</h6>')
           html.append('<ul class="list-unstyled mb-0 small">')
           if issue_url:
@@ -1635,7 +1636,7 @@ jobs:
               html.append(f'<li class="mb-1"><a href="{run_link}" target="_blank" rel="noopener" class="text-decoration-none">GitHub Actions (artefactos PDF/HTML)</a></li>')
           html.append('</ul>')
           html.append('</div>')
-          html.append('<div class="col-6 col-md-3 mb-3">')
+          html.append('<div class="col-6 col-md-4 mb-3">')
           html.append('<h6 class="fw-semibold mb-2">Recursos</h6>')
           config_url = f"{server_url}/{repo}/blob/main/.github/dependabot.yml"
           security_url = f"{server_url}/{repo}/settings/security_analysis"
@@ -1651,9 +1652,7 @@ jobs:
           html.append(f'<li class="mb-1"><a href="{advisories_url}" target="_blank" rel="noopener" class="text-decoration-none">Security Alerts</a></li>')
           html.append('</ul>')
           html.append('</div>')
-          html.append('<div class="col-md-3 mb-3 d-flex align-items-end">')
-          html.append('<div class="w-100 small text-muted">❤️🚀 Creado con ❤️ por el equipo de DevOps</div>')
-          html.append('</div>')
+          
           html.append('</div>')
           html.append('</div>')
           html.append('</footer>')
@@ -1678,20 +1677,17 @@ jobs:
           print(f"HTML generado en {html_path}")
           PY
 
-      - name: 📤 Subir HTML del reporte
-        if: ${{ inputs.generate_html_report }}
+      - name: 📤 Subir reportes combinados
+        if: ${{ inputs.generate_html_report || (inputs.generate_pdf_report && steps.generate_pdf.outputs.created == 'true') }}
         uses: actions/upload-artifact@v4
         with:
-          name: dependabot-report-html
-          path: docs/${{ inputs.html_report_name }}
-      - name: 📤 Subir PDF del reporte
-        if: ${{ inputs.generate_pdf_report && steps.generate_pdf.outputs.created == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependabot-report-pdf
-          path: docs/${{ inputs.pdf_report_name }}
+          name: dependabot-reportes
+          path: |
+            docs/*.html
+            docs/*.pdf
+          if-no-files-found: warn
 
-      - name: 💬 Comentar Issue con enlace al PDF
+      - name: 💬 Comentar Issue con enlaces a reportes
         if: ${{ (inputs.generate_pdf_report || inputs.generate_html_report) && steps.create_issue.outputs.issue_url != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1718,7 +1714,7 @@ jobs:
           links = []
           try:
               for a in artifacts.get('artifacts', []):
-                  if a.get('name') in ['dependabot-report-pdf','dependabot-report-html']:
+                  if a.get('name') == 'dependabot-reportes':
                       if 'archive_download_url' in a:
                           links.append(f"{a['name']}: {a['archive_download_url']}")
           except Exception:
