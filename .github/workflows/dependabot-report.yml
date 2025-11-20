@@ -2728,10 +2728,10 @@ jobs:
           print(f"HTML generado en {html_path}")
           PY
       - name: 📤 Subir HTML temporal
-        uses: actions/upload-artifact@v4
+        uses: actions/cache@v4
         with:
-          name: tmp-html
           path: docs/${{ inputs.html_report_name }}
+          key: dep-report-${{ github.run_id }}-html
 
   report_pdf:
     name: Generate PDF report
@@ -3235,33 +3235,31 @@ jobs:
                   f.write('created=true\n')
           print(f"PDF generado en {pdf_path}")
           PY
-      - name: 📤 Subir PDF temporal
+      - name: ♻️ Cachear PDF
         if: ${{ steps.generate_pdf.outputs.created == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/cache@v4
         with:
-          name: tmp-pdf
           path: docs/${{ inputs.pdf_report_name }}
+          key: dep-report-${{ github.run_id }}-pdf
 
   publish:
     name: Publish combined artifact and comment
     runs-on: ubuntu-latest
     needs: [configure, report_html, report_pdf]
-    permissions:
-      actions: write
     if: ${{ inputs.generate_html_report || (inputs.generate_pdf_report && needs.report_pdf.outputs.pdf_created == 'true') }}
     steps:
-      - name: ⬇️ Descargar HTML
+      - name: ♻️ Restaurar HTML desde cache
         if: ${{ inputs.generate_html_report }}
-        uses: actions/download-artifact@v4
+        uses: actions/cache@v4
         with:
-          name: tmp-html
           path: docs
-      - name: ⬇️ Descargar PDF
+          key: dep-report-${{ github.run_id }}-html
+      - name: ♻️ Restaurar PDF desde cache
         if: ${{ inputs.generate_pdf_report && needs.report_pdf.outputs.pdf_created == 'true' }}
-        uses: actions/download-artifact@v4
+        uses: actions/cache@v4
         with:
-          name: tmp-pdf
           path: docs
+          key: dep-report-${{ github.run_id }}-pdf
       - name: 📤 Subir reportes combinados
         uses: actions/upload-artifact@v4
         with:
@@ -3306,26 +3304,4 @@ jobs:
               body += f"Descargar reportes (zip): {link}\n\n"
           body += f"Descargar reportes desde el run: {run_link}\n"
           subprocess.run(['gh','issue','comment',num,'--repo',repo,'--body',body], check=False)
-          PY
-
-      - name: 🧹 Eliminar artefactos temporales
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          python3 - << 'PY'
-          import os, json, subprocess
-          repo = os.getenv('REPO')
-          run_id = os.getenv('RUN_ID')
-          try:
-              r = subprocess.run(['gh','api',f'repos/{repo}/actions/runs/{run_id}/artifacts'], capture_output=True, text=True)
-              artifacts = json.loads(r.stdout).get('artifacts', []) if r.returncode == 0 else []
-          except Exception:
-              artifacts = []
-          for a in artifacts:
-              name = a.get('name','')
-              aid = a.get('id')
-              if name in ('tmp-html','tmp-pdf') and aid:
-                  subprocess.run(['gh','api','-X','DELETE',f'repos/{repo}/actions/artifacts/{aid}'], check=False)
           PY
