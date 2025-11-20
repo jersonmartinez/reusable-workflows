@@ -865,6 +865,7 @@ jobs:
           PRS_DATA: ${{ steps.detect_prs.outputs.prs_data }}
           GH_TOKEN: ${{ github.token }}
           HTML_PATH: docs/${{ inputs.html_report_name }}
+          ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
         run: |
           python3 - << 'PY'
           # Genera un HTML navegable con índice y métricas agregadas
@@ -877,6 +878,7 @@ jobs:
               prs = []
           html_path = os.getenv('HTML_PATH','docs/dependabot-report.html')
           os.makedirs(os.path.dirname(html_path), exist_ok=True)
+          issue_url = os.getenv('ISSUE_URL','')
           def parse_title(t):
               # Extrae paquete, versiones y directorio del título
               m = re.search(r"bump\s+([^\s]+)\s+from\s+([^\s]+)\s+to\s+([^\s]+)(?:\s+in\s+(.+))?", t, re.IGNORECASE)
@@ -957,10 +959,12 @@ jobs:
           html.append('<!doctype html><html data-bs-theme="dark"><head><meta charset="utf-8"><title>Reporte Dependabot</title>')
           html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
           html.append('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">')
-          html.append('<style>body{padding-top:64px} .badge-ver{font-size:0.85rem} .section-card{border:1px solid var(--bs-border-color);border-radius:.75rem;padding:1rem;margin-bottom:1rem;background:var(--bs-tertiary-bg)} .table-responsive{max-height:540px;overflow:auto} .table thead th{position:sticky;top:0;background:var(--bs-tertiary-bg);z-index:1} .kpi{border-radius:.75rem;padding:1rem;background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color)} .kpi.kpi-primary{border-left:4px solid var(--bs-primary)} .kpi.kpi-warning{border-left:4px solid var(--bs-warning)} .kpi.kpi-success{border-left:4px solid var(--bs-success)} .kpi.kpi-danger{border-left:4px solid var(--bs-danger)} .navbar{border-bottom:0 !important;box-shadow:none !important}</style>')
+          html.append('<style>body{padding-top:64px} .badge-ver{font-size:0.85rem} .section-card{border:1px solid var(--bs-border-color);border-radius:.75rem;padding:1rem;margin-bottom:1rem;background:var(--bs-tertiary-bg);transition:box-shadow .15s ease,transform .15s ease} .section-card:hover{box-shadow:0 .5rem 1rem rgba(0,0,0,.15);transform:translateY(-2px)} .table-responsive{max-height:540px;overflow:auto} .table thead th{position:sticky;top:0;background:var(--bs-tertiary-bg);z-index:1} .table tbody tr{transition:background-color .15s ease} .table tbody tr:hover{background-color:var(--bs-secondary-bg)} .list-group-item{transition:background-color .15s ease} .list-group-item:hover{background-color:var(--bs-secondary-bg)} .kpi{border-radius:.75rem;padding:1rem;background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color);transition:box-shadow .15s ease,transform .15s ease} .kpi:hover{box-shadow:0 .5rem 1rem rgba(0,0,0,.2);transform:translateY(-2px)} .kpi.kpi-primary{border-left:4px solid var(--bs-primary)} .kpi.kpi-warning{border-left:4px solid var(--bs-warning)} .kpi.kpi-success{border-left:4px solid var(--bs-success)} .kpi.kpi-danger{border-left:4px solid var(--bs-danger)} .navbar{border-bottom:0 !important;box-shadow:none !important} .navbar .nav-link{transition:color .2s ease,opacity .2s ease} .navbar .nav-link:hover{color:var(--bs-primary);opacity:.9} .accordion-button{transition:background-color .15s ease} .accordion-button:hover{background-color:var(--bs-secondary-bg)} a{transition:color .2s ease} a:hover{color:var(--bs-primary)}</style>')
           html.append('</head><body>')
           html.append(f'<nav class="navbar navbar-expand-md fixed-top bg-body-tertiary border-bottom"><div class="container"><a class="navbar-brand d-flex align-items-center" href="#"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2">PRB</a><button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#topNav" aria-controls="topNav" aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button><div class="collapse navbar-collapse" id="topNav"><ul class="navbar-nav ms-auto me-2"><li class="nav-item"><a class="nav-link" href="#listado">PRs</a></li><li class="nav-item"><a class="nav-link" href="#resumen">Resumen</a></li><li class="nav-item"><a class="nav-link" href="#dir">Directorios</a></li><li class="nav-item"><a class="nav-link" href="#dir-detalles">Detalles</a></li><li class="nav-item"><a class="nav-link" href="{server_url}/{repo}" target="_blank" rel="noopener"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" class="me-1"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01 .37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33 .66 .07-.52 .28-.87 .51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87 .31-1.59 .82-2.15-.08-.2-.36-1.02 .08-2.12 0 0 .67-.21 2.2 .82 .64-.18 1.32-.27 2-.27s1.36 .09 2 .27c1.53-1.04 2.2-.82 2.2-.82 .44 1.1 .16 1.92 .08 2.12 .51 .56 .82 1.27 .82 2.15 0 3.07-1.87 3.75-3.65 3.95 .29 .25 .54 .73 .54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21 .15 .46 .55 .38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span class="ms-1"><code>{repo or "—"}</code></span></a></li></ul></div></div></nav>')
           html.append('<div class="container my-4">')
+          if issue_url:
+              html.append(f'<div class="alert alert-secondary py-2">🧾 Reporte consolidado: <a href="{issue_url}" target="_blank" rel="noopener" class="text-decoration-none">{issue_url}</a></div>')
           html.append(f'<h1 class="mb-3">Reporte Dependabot</h1><p class="text-muted">Generado: {ts} • Repositorio: <a href="{server_url}/{repo}" target="_blank" rel="noopener" class="text-decoration-none"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" class="me-1"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><code>{repo or "—"}</code></a></p>')
           
 
@@ -1062,7 +1066,7 @@ jobs:
 
           def render_rows(items):
               html.append('<div class="table-responsive">')
-              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th data-sort="num">PR</th><th data-sort="name">Paquete</th><th data-sort="from">Desde</th><th data-sort="to">Hasta</th><th data-sort="dir">Dir</th><th data-sort="eco">Eco</th><th data-sort="risk">Riesgo</th><th data-sort="state">Estado</th><th data-sort="labels">Labels</th><th data-sort="created">Creado</th></tr></thead><tbody>')
+              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th data-sort="num">PR</th><th data-sort="name">Paquete</th><th data-sort="from">Desde</th><th data-sort="to">Hasta</th><th data-sort="dir">Dir</th><th data-sort="eco">Eco</th><th data-sort="risk">Riesgo</th><th data-sort="state">Estado</th><th data-sort="labels">Labels</th><th data-sort="created">Creado</th><th>Reporte</th></tr></thead><tbody>')
               for r in items:
                   st = current_state_for(r)
                   typ = 'other'
@@ -1085,6 +1089,7 @@ jobs:
                         f'<td>{st}</td>'
                         f'<td>{labels_html}</td>'
                         f'<td>{r["created"]}</td>'
+                        f'<td>' + (f'<a href="{issue_url}" target="_blank" rel="noopener">Issue</a>' if issue_url else '—') + '</td>'
                         f'</tr>'
                   )
               html.append('</tbody></table>')
@@ -1205,7 +1210,61 @@ jobs:
               alerts = _tmp if isinstance(_tmp, list) else []
           except Exception:
               alerts = []
+          sev_agg = {}
+          pkg_stats = {}
+          for a in alerts:
+              if isinstance(a, dict):
+                  s = (a.get('severity','') or 'unknown').lower()
+                  sev_agg[s] = sev_agg.get(s,0)+1
+                  dep = a.get('dependency') if isinstance(a.get('dependency'), dict) else {}
+                  pkg_obj = dep.get('package') if isinstance(dep.get('package'), dict) else {}
+                  name = pkg_obj.get('name') or '—'
+                  fx = a.get('fixed_version') or ''
+                  ps = pkg_stats.get(name, {'count':0,'fix':'—'})
+                  ps['count'] += 1
+                  if fx:
+                      ps['fix'] = '✅'
+                  pkg_stats[name] = ps
+          dir_pr_counts = {}
+          for r in rows:
+              d = r.get('dir','/') or '/'
+              dir_pr_counts[d] = dir_pr_counts.get(d,0)+1
+          alerts_dir_counts = {}
+          for a in alerts:
+              mp = (a.get('manifest_path','') or '').strip()
+              d = '/'
+              try:
+                  if mp and '/' in mp:
+                      parts = mp.split('/')
+                      d = '/' + '/'.join(parts[:-1])
+                  elif mp:
+                      d = '/'
+              except Exception:
+                  d = '/'
+              alerts_dir_counts[d] = alerts_dir_counts.get(d,0)+1
           if alerts:
+              html.append('<div class="row g-3 mt-3">')
+              html.append('<div class="col-md-4"><div class="section-card"><h5 class="mb-2">Resumen por severidad</h5>')
+              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Severidad</th><th>Cantidad</th></tr></thead><tbody>')
+              for k in ['critical','high','moderate','low','unknown']:
+                  if k in sev_agg:
+                      html.append(f'<tr><td>{k}</td><td>{sev_agg[k]}</td></tr>')
+              html.append('</tbody></table></div></div>')
+              html.append('<div class="col-md-4"><div class="section-card"><h5 class="mb-2">Paquetes más afectados</h5>')
+              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Paquete</th><th>Cantidad</th><th>Fix</th></tr></thead><tbody>')
+              for name, ps in sorted(pkg_stats.items(), key=lambda kv: kv[1]['count'], reverse=True)[:10]:
+                  html.append(f'<tr><td>{name}</td><td>{ps["count"]}</td><td>{ps["fix"]}</td></tr>')
+              html.append('</tbody></table></div></div>')
+              html.append('<div class="col-md-4"><div class="section-card"><h5 class="mb-2">Cobertura por directorio</h5>')
+              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Directorio</th><th>PRs</th><th>Alertas</th><th>Densidad</th></tr></thead><tbody>')
+              for d in sorted(set(list(dir_pr_counts.keys()) + list(alerts_dir_counts.keys()))):
+                  prs_c = dir_pr_counts.get(d,0)
+                  alt_c = alerts_dir_counts.get(d,0)
+                  dens = f"{(alt_c / prs_c):.2f}" if prs_c > 0 else ('∞' if alt_c > 0 else '0')
+                  cell = f'<a href="{server_url}/{repo}/tree/main' + ('' if d == '/' else d) + f'" target="_blank" rel="noopener"><code>{d}</code></a>' if (d and d.startswith('/')) else f'<code>{d}</code>'
+                  html.append(f'<tr><td>{cell}</td><td>{prs_c}</td><td>{alt_c}</td><td>{dens}</td></tr>')
+              html.append('</tbody></table></div></div>')
+              html.append('</div>')
               html.append('<div class="table-responsive">')
               html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Paquete</th><th>Severidad</th><th>CVSS</th><th>Ecosistema</th><th>Manifest</th><th>GHSA</th><th>CVE</th><th>Resumen</th><th>Rango</th><th>Fix</th></tr></thead><tbody>')
               for a in alerts[:50]:
@@ -1232,15 +1291,16 @@ jobs:
               html.append('</div>')
           else:
               html.append('<div class="alert alert-success" role="alert">No se detectaron alertas abiertas de Dependabot o no hay permisos para leerlas.</div>')
+          html.append('<div class="alert alert-info mt-4"><h4 class="mb-2">Guía para empezar</h4><ol class="mb-0"><li>Revisa el <b>Resumen por severidad</b> para identificar alertas críticas.</li><li>Verifica los <b>Paquetes más afectados</b> para priorizar fixes.</li><li>Analiza la <b>Cobertura por directorio</b> para detectar rutas con alta densidad.</li><li>Consulta los PRs abiertos y el <b>Reporte consolidado</b> para planificar acciones.</li></ol></div>')
           html.append('</div>')
           
           html.append('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>')
           html.append('<script>\n' 
             'document.querySelectorAll("table thead th[data-sort]").forEach(th=>{th.style.cursor="pointer";th.addEventListener("click",()=>{const key=th.dataset.sort;const idx=th.cellIndex;const table=th.closest("table");const rows=[...table.tBodies[0].rows];const asc=th.dataset.order!="desc";function val(row){const attr=row.getAttribute("data-"+key);if(attr) return attr;return row.cells[idx].innerText.trim();} rows.sort((a,b)=>{let va=val(a), vb=val(b); if(key==="num"){va=parseInt(String(va).replace(/[^0-9]/g,''))||0; vb=parseInt(String(vb).replace(/[^0-9]/g,''))||0; return asc?va-vb:vb-va;} if(key==="created"){const da=Date.parse(va)||0, db=Date.parse(vb)||0; return asc?da-db:db-da;} return asc?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));});rows.forEach(r=>table.tBodies[0].appendChild(r));th.dataset.order=asc?"desc":"asc";});});\n' 
             ''
-            'function cssColors(){const s=getComputedStyle(document.documentElement);return {text:s.getPropertyValue("--bs-body-color").trim()||"#212529",grid:s.getPropertyValue("--bs-border-color").trim()||"#dee2e6"};} \n' 
-            'let cc=cssColors();\n' 
-            'let chartTypes, chartEcos;\n' 
+            ''
+            ''
+            '// charts removed\n' 
             'function initCharts(){try{const ct=document.getElementById("chartTypes");const ce=document.getElementById("chartEcos");if(ct){chartTypes=new Chart(ct,{type:"bar",data:{labels:["major","minor","patch","other"],datasets:[{label:"Tipos",data:[' + ','.join(str(total_agg[k]) for k in ['major','minor','patch','other']) + '],backgroundColor:["#dc3545","#ffc107","#198754","#6c757d"]}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:cc.text},grid:{color:cc.grid}},y:{ticks:{color:cc.text},grid:{color:cc.grid}}}});} if(ce){chartEcos=new Chart(ce,{type:"doughnut",data:{labels:' + json.dumps(sorted(list(eco_agg.keys()))) + ',datasets:[{data:' + json.dumps([eco_agg[e]['major']+eco_agg[e]['minor']+eco_agg[e]['patch']+eco_agg[e]['other'] for e in sorted(eco_agg.keys())]) + ',backgroundColor:["#0d6efd","#6610f2","#6f42c1","#20c997","#fd7e14","#198754","#dc3545","#6c757d"]}]},options:{responsive:true,plugins:{legend:{labels:{color:cc.text}}}});} }catch(e){}}\n' 
             'function applyThemeToCharts(){cc=cssColors();if(chartTypes){chartTypes.options.scales.x.ticks.color=cc.text;chartTypes.options.scales.x.grid.color=cc.grid;chartTypes.options.scales.y.ticks.color=cc.text;chartTypes.options.scales.y.grid.color=cc.grid;chartTypes.update();} if(chartEcos){chartEcos.options.plugins.legend.labels.color=cc.text;chartEcos.update();}} \n' 
             ''
