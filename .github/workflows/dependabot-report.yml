@@ -106,7 +106,7 @@ on:
       prs_state:
         required: false
         type: string
-        default: 'open'
+        default: 'all'
 
 jobs:
   configure:
@@ -408,6 +408,38 @@ jobs:
             except Exception as e:
               log(f"list_prs_api exception: {e}")
               return []
+          def list_prs_search():
+            try:
+              state = os.getenv('PRS_STATE','open')
+              qp = [f"repo:{repo}", "is:pr", "(author:app/dependabot OR author:dependabot OR author:dependabot[bot])"]
+              if state in ('open','closed'):
+                qp.append(f"is:{state}")
+              q = " ".join(qp)
+            except Exception:
+              q = ""
+            if not q:
+              return []
+            try:
+              result = subprocess.run(['gh','api','search/issues','-f',f"q={q}",'-f','per_page=100'], capture_output=True, text=True)
+              if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                items = data.get('items',[])
+                out = []
+                for it in items:
+                  out.append({
+                    'number': it.get('number'),
+                    'title': it.get('title'),
+                    'url': it.get('html_url'),
+                    'labels': it.get('labels',[]),
+                    'createdAt': it.get('created_at',''),
+                    'headRefName': '',
+                    'state': it.get('state','')
+                  })
+                return out
+              log(f"list_prs_search non-0 returncode: {result.returncode} stderr={result.stderr.strip()}")
+            except Exception as e:
+              log(f"list_prs_search exception: {e}")
+            return []
           prs = list_prs_api()
           log(f"Initial PRs count: {len(prs)}")
           if prs:
@@ -418,6 +450,11 @@ jobs:
               time.sleep(poll_interval)
               prs = list_prs_api()
               log(f"Polling... PRs count: {len(prs)}")
+          if len(prs) == 0:
+              fallback = list_prs_search()
+              if fallback:
+                  prs = fallback
+              log(f"Fallback PRs count: {len(prs)}")
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
               f.write('prs_data<<EOF\n')
               f.write(json.dumps(prs))
@@ -533,7 +570,7 @@ jobs:
                     if snippet:
                         lines.append(f"  \n  {snippet}\n")
             else:
-                lines.append("\nNo se encontraron PRs abiertos de Dependabot en este momento.\n")
+                lines.append("\nNo se encontraron PRs de Dependabot en este momento.\n")
             return ''.join(lines)
 
           def find_existing_issue(title, repo):
