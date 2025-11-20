@@ -116,10 +116,6 @@ jobs:
     concurrency:
       group: dependabot-report
       cancel-in-progress: true
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
     outputs:
       prs_data: ${{ steps.detect_prs.outputs.prs_data }}
       issue_url: ${{ steps.create_issue.outputs.issue_url }}
