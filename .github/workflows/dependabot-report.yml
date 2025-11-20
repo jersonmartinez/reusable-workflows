@@ -1050,7 +1050,7 @@ jobs:
                   return 'merged' if merged_at else 'closed'
               except Exception:
                   return 'closed'
-          data = [['PR','Paquete','Versiones','Dir','Estado','Riesgo','Edad','Creado']]
+          data = [['PR','Paquete','Versiones','Estado','Riesgo','Creado']]
           for pr in prs:
               num = pr.get('number','')
               title = pr.get('title','')
@@ -1073,23 +1073,19 @@ jobs:
               risklev = risk_level(typ, age, labels_list)
               risk_txt = {'critical':'Crítico','high':'Alto','medium':'Medio','low':'Bajo'}.get(risklev,'Bajo')
               vers_cell = Paragraph(f"{meta.get('from','')} → {meta.get('to','')}", styles['Normal'])
-              dir_cell = Paragraph(f"<link href='{server_url}/{repo_url}/tree/main" + ('' if d == '/' else d) + f"'>{d}</link>", styles['Normal']) if (d and d.startswith('/')) else Paragraph(d or '/', styles['Normal'])
               pr_cell = Paragraph(f"<link href='{server_url}/{repo_url}/pull/{num}'>#{num}</link>", styles['Normal'])
-              age_cell = Paragraph(((str(age)+' d') if isinstance(age,int) else 'N/A'), styles['Normal'])
               risk_cell = Paragraph(risk_txt, styles['Normal'])
-              data.append([pr_cell, meta.get('name','—'), vers_cell, dir_cell, state, risk_cell, age_cell, created_fmt])
+              data.append([pr_cell, meta.get('name','—'), vers_cell, state, risk_cell, created_fmt])
           table = Table(
               data,
               repeatRows=1,
               colWidths=[
-                  doc.width*0.10,  # PR
-                  doc.width*0.26,  # Paquete
-                  doc.width*0.18,  # Versiones
-                  doc.width*0.16,  # Dir
-                  doc.width*0.10,  # Estado
-                  doc.width*0.08,  # Riesgo
-                  doc.width*0.06,  # Edad
-                  doc.width*0.06   # Creado
+                  doc.width*0.10,
+                  doc.width*0.32,
+                  doc.width*0.24,
+                  doc.width*0.12,
+                  doc.width*0.10,
+                  doc.width*0.12
               ]
           )
           table.setStyle(TableStyle([
@@ -1187,6 +1183,8 @@ jobs:
               ListItem(Paragraph('Documenta paquetes sin fix y da seguimiento.', styles['Normal']))
           ]
           flow.append(ListFlowable(items2, bulletType='bullet'))
+          flow.append(Spacer(1,6))
+          flow.append(Paragraph('Creado con ❤️ por el equipo de DevOps', styles['Italic']))
           doc.build(flow)
           created = True
           out = os.environ.get('GITHUB_OUTPUT')
@@ -3227,6 +3225,8 @@ jobs:
               ListItem(Paragraph('Documenta paquetes sin fix y da seguimiento.', styles['Normal']))
           ]
           flow.append(ListFlowable(items2, bulletType='bullet'))
+          flow.append(Spacer(1,6))
+          flow.append(Paragraph('Creado con ❤️ por el equipo de DevOps', styles['Italic']))
           doc.build(flow)
           created = True
           out = os.environ.get('GITHUB_OUTPUT')
