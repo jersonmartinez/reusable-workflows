@@ -997,7 +997,48 @@ jobs:
           html.append(f'<div class="col-md-3"><div class="kpi kpi-success"><div class="fw-bold">✅ Fusionados</div><div class="display-6">\n<a href="{server_url}/{repo}/pulls?q=is%3Apr+is%3Amerged+author%3Aapp%2Fdependabot" target="_blank" rel="noopener" class="text-success text-decoration-none">{len(merged_rows)}</a></div></div></div>')
           html.append(f'<div class="col-md-3"><div class="kpi kpi-danger"><div class="fw-bold">❌ Cerrados</div><div class="display-6">\n<a href="{server_url}/{repo}/pulls?q=is%3Apr+is%3Aclosed+author%3Aapp%2Fdependabot" target="_blank" rel="noopener" class="text-danger text-decoration-none">{len(closed_rows)}</a></div></div></div>')
           html.append('</div>')
-          html.append('<h2 id="listado" class="mt-4">PRs por estado</h2>')
+          try:
+              prio = []
+              for r in open_rows:
+                  typ = 'other'
+                  try:
+                      typ = update_type(r.get('from',''), r.get('to','')) if r.get('from') and r.get('to') else 'other'
+                  except Exception:
+                      typ = 'other'
+                  age = age_days(r.get('created_iso',''))
+                  rv = risk_level(typ, age, r.get('labels_list',[]))
+                  prio.append({ 'r': r, 'age': (age if isinstance(age,int) else 0), 'risk': rv, 'riskw': (3 if rv=='critical' else 2 if rv=='high' else 1 if rv=='medium' else 0) })
+              prio = sorted(prio, key=lambda x: (x['riskw'], x['age']), reverse=True)[:10]
+              if prio:
+                  html.append('<div class="row g-3 mt-2"><div class="col-12">')
+                  html.append('<h2 id="prioridad" class="mb-2">PRs prioritarios</h2>')
+                  html.append('<div class="table-responsive">')
+                  html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>PR</th><th>Paquete</th><th>Tipo</th><th>Riesgo</th><th>Edad</th><th>Dir</th></tr></thead><tbody>')
+                  for it in prio:
+                      r = it['r']
+                      typ = update_type(r.get('from',''), r.get('to','')) if r.get('from') and r.get('to') else 'other'
+                      html.append(
+                          f'<tr>'
+                          f'<td><a href="{r["url"]}" target="_blank" rel="noopener">#{r["num"]}</a></td>'
+                          f'<td>{r["name"]}</td>'
+                          f'<td>{type_badges(typ)}</td>'
+                          f'<td>{risk_badge(it["risk"])}</td>'
+                          f'<td>{it["age"]} d</td>'
+                          f'<td>{dir_cell_html(r.get("dir","/"))}</td>'
+                          f'</tr>'
+                      )
+                  html.append('</tbody></table>')
+                  html.append('</div>')
+                  html.append('</div></div>')
+          except Exception:
+              pass
+          html.append('<div class="row g-2 align-items-end mb-2">')
+          html.append('<div class="col-md-4"><label for="filterQuery" class="form-label">Buscar</label><input id="filterQuery" type="text" class="form-control form-control-sm" placeholder="paquete, directorio, ecosistema, #PR"></div>')
+          html.append('<div class="col-md-3"><label for="filterType" class="form-label">Tipo</label><select id="filterType" class="form-select form-select-sm"><option value="all">Todos</option><option value="major">major</option><option value="minor">minor</option><option value="patch">patch</option><option value="other">other</option></select></div>')
+          html.append('<div class="col-md-3"><label for="filterRisk" class="form-label">Riesgo</label><select id="filterRisk" class="form-select form-select-sm"><option value="all">Todos</option><option value="critical">critical</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option></select></div>')
+          html.append('<div class="col-md-2"><label for="filterState" class="form-label">Estado</label><select id="filterState" class="form-select form-select-sm"><option value="all">Todos</option><option value="open">open</option><option value="merged">merged</option><option value="closed">closed</option></select></div>')
+          html.append('</div>')
+          html.append('<h2 id="listado" class="mt-2">PRs por estado</h2>')
           html.append('<div class="accordion" id="prAccordion">')
 
           from urllib.parse import quote_plus
@@ -1066,7 +1107,7 @@ jobs:
 
           def render_rows(items):
               html.append('<div class="table-responsive">')
-              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th data-sort="num">PR</th><th data-sort="name">Paquete</th><th data-sort="from">Desde</th><th data-sort="to">Hasta</th><th data-sort="dir">Dir</th><th data-sort="eco">Eco</th><th data-sort="risk">Riesgo</th><th data-sort="state">Estado</th><th data-sort="labels">Labels</th><th data-sort="created">Creado</th><th>Reporte</th></tr></thead><tbody>')
+              html.append('<table class="table table-striped table-bordered table-sm mb-2 pr-table"><thead><tr><th data-sort="num">PR</th><th data-sort="name">Paquete</th><th data-sort="from">Desde</th><th data-sort="to">Hasta</th><th data-sort="dir">Dir</th><th data-sort="eco">Eco</th><th data-sort="risk">Riesgo</th><th data-sort="state">Estado</th><th data-sort="labels">Labels</th><th data-sort="created">Creado</th><th data-sort="age">Edad</th><th>Reporte</th></tr></thead><tbody>')
               for r in items:
                   st = current_state_for(r)
                   typ = 'other'
@@ -1078,7 +1119,7 @@ jobs:
                   labels_html = label_tags(r.get('labels_list',[])) if r.get('labels_list') is not None else r.get('labels','—')
                   risklev = risk_level(typ, age, r.get('labels_list',[]))
                   html.append(
-                      f'<tr data-num="{r["num"]}" data-name="{r["name"]}" data-from="{r.get("from","")}" data-to="{r.get("to","")}" data-dir="{r.get("dir","/")}" data-eco="{r.get("eco","unknown")}" data-type="{typ}" data-risk="{risklev}" data-state="{st}" data-created="{r["created"]}">' 
+                      f'<tr data-num="{r["num"]}" data-name="{r["name"]}" data-from="{r.get("from","")}" data-to="{r.get("to","")}" data-dir="{r.get("dir","/")}" data-eco="{r.get("eco","unknown")}" data-type="{typ}" data-risk="{risklev}" data-state="{st}" data-created="{r["created"]}" data-age="{(age if isinstance(age,int) else 0)}">' 
                         f'<td><a href="{r["url"]}" target="_blank" rel="noopener">#{r["num"]}</a></td>'
                         f'<td>{r["name"]}</td>'
                         f'<td>{badge_for(r.get("from",""), typ, "from")}</td>'
@@ -1089,11 +1130,34 @@ jobs:
                         f'<td>{st}</td>'
                         f'<td>{labels_html}</td>'
                         f'<td>{r["created"]}</td>'
+                        f'<td>' + ((str(age)+' d') if isinstance(age,int) else 'N/A') + '</td>'
                         f'<td>' + (f'<a href="{issue_url}" target="_blank" rel="noopener">Issue</a>' if issue_url else '—') + '</td>'
                         f'</tr>'
                   )
               html.append('</tbody></table>')
               html.append('</div>')
+              try:
+                  open_pkg_names = { r.get('name','') for r in open_rows }
+                  fixable_no_pr = []
+                  for a in alerts:
+                      if not isinstance(a, dict):
+                          continue
+                      dep = a.get('dependency') if isinstance(a.get('dependency'), dict) else {}
+                      pkg_obj = dep.get('package') if isinstance(dep.get('package'), dict) else {}
+                      name = pkg_obj.get('name') or ''
+                      fx = a.get('fixed_version') or ''
+                      if fx and name and name not in open_pkg_names:
+                          fixable_no_pr.append({'name':name,'fix':fx,'manifest':a.get('manifest_path','') or '—'})
+                  if fixable_no_pr:
+                      html.append('<div class="mt-3"><div class="section-card"><h5 class="mb-2">Fix disponible sin PR</h5>')
+                      html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Paquete</th><th>Fix</th><th>Manifest</th></tr></thead><tbody>')
+                      for it in fixable_no_pr[:10]:
+                          man = it['manifest']
+                          man_ref = f'<a href="{server_url}/{repo}/blob/main/{man}" target="_blank" rel="noopener"><code>{man}</code></a>' if man != '—' else '<code>—</code>'
+                          html.append(f'<tr><td>{it["name"]}</td><td><code>{it["fix"]}</code></td><td>{man_ref}</td></tr>')
+                      html.append('</tbody></table></div></div>')
+              except Exception:
+                  pass
 
           html.append('<div class="accordion-item">')
           html.append('<h2 class="accordion-header" id="headingOpen">')
@@ -1153,6 +1217,15 @@ jobs:
               else:
                   cell = f'<code>{d}</code>'
               html.append(f'<tr><td>{cell}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
+          html.append('</tbody></table>')
+          html.append('</div></div>')
+
+          html.append('<div class="row g-3 mt-2"><div class="col-12">')
+          html.append('<h2 id="eco" class="mb-2">Métricas por ecosistema</h2>')
+          html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
+          for e in sorted(eco_agg.keys()):
+              v = eco_agg[e]
+              html.append(f'<tr><td><code>{e}</code></td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
           html.append('</div></div>')
 
@@ -1286,7 +1359,11 @@ jobs:
                   fix = a.get('fixed_version') or '—'
                   ghsa_ref = f'<a href="https://github.com/advisories/{ghsa}" target="_blank" rel="noopener">{ghsa}</a>' if ghsa != '—' else '—'
                   cve_ref = f'<a href="https://nvd.nist.gov/vuln/detail/{cve}" target="_blank" rel="noopener">{cve}</a>' if cve else '—'
-                  html.append(f'<tr><td>{pkg}</td><td>{sev}</td><td>{cvss}</td><td>{eco}</td><td><code>{manifest}</code></td><td>{ghsa_ref}</td><td>{cve_ref}</td><td>{summary}</td><td><code>{rng}</code></td><td><code>{fix}</code></td></tr>')
+                  if manifest != '—' and isinstance(manifest,str):
+                      man_ref = f'<a href="{server_url}/{repo}/blob/main/{manifest}" target="_blank" rel="noopener"><code>{manifest}</code></a>'
+                  else:
+                      man_ref = f'<code>{manifest}</code>'
+                  html.append(f'<tr><td>{pkg}</td><td>{sev}</td><td>{cvss}</td><td>{eco}</td><td>{man_ref}</td><td>{ghsa_ref}</td><td>{cve_ref}</td><td>{summary}</td><td><code>{rng}</code></td><td><code>{fix}</code></td></tr>')
               html.append('</tbody></table>')
               html.append('</div>')
           else:
@@ -1296,9 +1373,9 @@ jobs:
           
           html.append('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>')
           html.append('<script>\n' 
-            'document.querySelectorAll("table thead th[data-sort]").forEach(th=>{th.style.cursor="pointer";th.addEventListener("click",()=>{const key=th.dataset.sort;const idx=th.cellIndex;const table=th.closest("table");const rows=[...table.tBodies[0].rows];const asc=th.dataset.order!="desc";function val(row){const attr=row.getAttribute("data-"+key);if(attr) return attr;return row.cells[idx].innerText.trim();} rows.sort((a,b)=>{let va=val(a), vb=val(b); if(key==="num"){va=parseInt(String(va).replace(/[^0-9]/g,''))||0; vb=parseInt(String(vb).replace(/[^0-9]/g,''))||0; return asc?va-vb:vb-va;} if(key==="created"){const da=Date.parse(va)||0, db=Date.parse(vb)||0; return asc?da-db:db-da;} return asc?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));});rows.forEach(r=>table.tBodies[0].appendChild(r));th.dataset.order=asc?"desc":"asc";});});\n' 
-            ''
-            ''
+            'document.querySelectorAll("table thead th[data-sort]").forEach(th=>{th.style.cursor="pointer";th.addEventListener("click",()=>{const key=th.dataset.sort;const idx=th.cellIndex;const table=th.closest("table");const rows=[...table.tBodies[0].rows];const asc=th.dataset.order!="desc";function val(row){const attr=row.getAttribute("data-"+key);if(attr) return attr;return row.cells[idx].innerText.trim();} rows.sort((a,b)=>{let va=val(a), vb=val(b); if(key==="num"){va=parseInt(String(va).replace(/[^0-9]/g,''))||0; vb=parseInt(String(vb).replace(/[^0-9]/g,''))||0; return asc?va-vb:vb-va;} if(key==="created"){const da=Date.parse(va)||0, db=Date.parse(vb)||0; return asc?da-db:db-da;} if(key==="age"){va=parseInt(va)||0; vb=parseInt(vb)||0; return asc?va-vb:vb-va;} return asc?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));});rows.forEach(r=>table.tBodies[0].appendChild(r));th.dataset.order=asc?"desc":"asc";});});\n' 
+            'function runFilter(){const q=(document.getElementById("filterQuery")?.value||"").trim().toLowerCase();const t=(document.getElementById("filterType")?.value||"all");const r=(document.getElementById("filterRisk")?.value||"all");const s=(document.getElementById("filterState")?.value||"all");document.querySelectorAll(".pr-table tbody tr").forEach(row=>{const name=(row.getAttribute("data-name")||"").toLowerCase();const dir=(row.getAttribute("data-dir")||"").toLowerCase();const eco=(row.getAttribute("data-eco")||"").toLowerCase();const num=(row.getAttribute("data-num")||"");const matchesQuery=!q||name.includes(q)||dir.includes(q)||eco.includes(q)||num.includes(q);const matchesType=(t==="all"||row.getAttribute("data-type")===t);const matchesRisk=(r==="all"||row.getAttribute("data-risk")===r);const matchesState=(s==="all"||row.getAttribute("data-state")===s);row.style.display=(matchesQuery&&matchesType&&matchesRisk&&matchesState)?"":"none";});}\n' 
+            'document.getElementById("filterQuery")?.addEventListener("input",runFilter);document.getElementById("filterType")?.addEventListener("change",runFilter);document.getElementById("filterRisk")?.addEventListener("change",runFilter);document.getElementById("filterState")?.addEventListener("change",runFilter);\n' 
             ''
             '// charts removed\n' 
             'function initCharts(){try{const ct=document.getElementById("chartTypes");const ce=document.getElementById("chartEcos");if(ct){chartTypes=new Chart(ct,{type:"bar",data:{labels:["major","minor","patch","other"],datasets:[{label:"Tipos",data:[' + ','.join(str(total_agg[k]) for k in ['major','minor','patch','other']) + '],backgroundColor:["#dc3545","#ffc107","#198754","#6c757d"]}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:cc.text},grid:{color:cc.grid}},y:{ticks:{color:cc.text},grid:{color:cc.grid}}}});} if(ce){chartEcos=new Chart(ce,{type:"doughnut",data:{labels:' + json.dumps(sorted(list(eco_agg.keys()))) + ',datasets:[{data:' + json.dumps([eco_agg[e]['major']+eco_agg[e]['minor']+eco_agg[e]['patch']+eco_agg[e]['other'] for e in sorted(eco_agg.keys())]) + ',backgroundColor:["#0d6efd","#6610f2","#6f42c1","#20c997","#fd7e14","#198754","#dc3545","#6c757d"]}]},options:{responsive:true,plugins:{legend:{labels:{color:cc.text}}}});} }catch(e){}}\n' 
