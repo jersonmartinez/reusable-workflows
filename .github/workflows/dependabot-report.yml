@@ -954,13 +954,12 @@ jobs:
           repo = os.getenv('GITHUB_REPOSITORY','')
           server_url = os.getenv('GITHUB_SERVER_URL','https://github.com')
           html = []
-          html.append('<!doctype html><html data-bs-theme="light"><head><meta charset="utf-8"><title>Reporte Dependabot</title>')
+          html.append('<!doctype html><html data-bs-theme="dark"><head><meta charset="utf-8"><title>Reporte Dependabot</title>')
           html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
           html.append('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">')
-          html.append('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>')
-          html.append('<style>body{padding-top:64px} .badge-ver{font-size:0.85rem} .section-card{border:1px solid var(--bs-border-color);border-radius:.5rem;padding:1rem;margin-bottom:1rem;background:var(--bs-tertiary-bg)} .table-responsive{max-height:540px;overflow:auto} .table thead th{position:sticky;top:0;background:var(--bs-tertiary-bg);z-index:1} .kpi{border-radius:.5rem;padding:1rem;background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color)} .kpi.kpi-primary{border-left:4px solid var(--bs-primary)} .kpi.kpi-warning{border-left:4px solid var(--bs-warning)} .kpi.kpi-success{border-left:4px solid var(--bs-success)} .kpi.kpi-danger{border-left:4px solid var(--bs-danger)} .navbar{border-bottom:0 !important;box-shadow:none !important}</style>')
+          html.append('<style>body{padding-top:64px} .badge-ver{font-size:0.85rem} .section-card{border:1px solid var(--bs-border-color);border-radius:.75rem;padding:1rem;margin-bottom:1rem;background:var(--bs-tertiary-bg)} .table-responsive{max-height:540px;overflow:auto} .table thead th{position:sticky;top:0;background:var(--bs-tertiary-bg);z-index:1} .kpi{border-radius:.75rem;padding:1rem;background:var(--bs-tertiary-bg);border:1px solid var(--bs-border-color)} .kpi.kpi-primary{border-left:4px solid var(--bs-primary)} .kpi.kpi-warning{border-left:4px solid var(--bs-warning)} .kpi.kpi-success{border-left:4px solid var(--bs-success)} .kpi.kpi-danger{border-left:4px solid var(--bs-danger)} .navbar{border-bottom:0 !important;box-shadow:none !important}</style>')
           html.append('</head><body>')
-          html.append(f'<nav class="navbar navbar-expand-md fixed-top bg-body-tertiary border-bottom"><div class="container"><a class="navbar-brand d-flex align-items-center" href="#"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2">PRB</a><button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#topNav" aria-controls="topNav" aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button><div class="collapse navbar-collapse" id="topNav"><ul class="navbar-nav ms-auto me-2"><li class="nav-item"><a class="nav-link" href="#listado">PRs</a></li><li class="nav-item"><a class="nav-link" href="#resumen">Resumen</a></li><li class="nav-item"><a class="nav-link" href="#dir">Directorios</a></li><li class="nav-item"><a class="nav-link" href="#eco">Ecosistemas</a></li><li class="nav-item"><a class="nav-link" href="#dir-detalles">Detalles</a></li><li class="nav-item"><a class="nav-link" href="{server_url}/{repo}" target="_blank" rel="noopener"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" class="me-1"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01 .37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33 .66 .07-.52 .28-.87 .51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87 .31-1.59 .82-2.15-.08-.2-.36-1.02 .08-2.12 0 0 .67-.21 2.2 .82 .64-.18 1.32-.27 2-.27s1.36 .09 2 .27c1.53-1.04 2.2-.82 2.2-.82 .44 1.1 .16 1.92 .08 2.12 .51 .56 .82 1.27 .82 2.15 0 3.07-1.87 3.75-3.65 3.95 .29 .25 .54 .73 .54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21 .15 .46 .55 .38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span class="ms-1"><code>{repo or "—"}</code></span></a></li><li class="nav-item dropdown"><a href="#" class="nav-link dropdown-toggle" id="colorMode" role="button" data-bs-toggle="dropdown" aria-expanded="false">Tema</a><ul class="dropdown-menu dropdown-menu-end" aria-labelledby="colorMode" style="--bs-dropdown-min-width: 8rem"><li><button type="button" class="dropdown-item" data-bs-theme-value="auto">Auto</button></li><li><button type="button" class="dropdown-item" data-bs-theme-value="light">Claro</button></li><li><button type="button" class="dropdown-item" data-bs-theme-value="dark">Oscuro</button></li></ul></li></ul></div></div></nav>')
+          html.append(f'<nav class="navbar navbar-expand-md fixed-top bg-body-tertiary border-bottom"><div class="container"><a class="navbar-brand d-flex align-items-center" href="#"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2">PRB</a><button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#topNav" aria-controls="topNav" aria-expanded="false" aria-label="Toggle navigation"><span class="navbar-toggler-icon"></span></button><div class="collapse navbar-collapse" id="topNav"><ul class="navbar-nav ms-auto me-2"><li class="nav-item"><a class="nav-link" href="#listado">PRs</a></li><li class="nav-item"><a class="nav-link" href="#resumen">Resumen</a></li><li class="nav-item"><a class="nav-link" href="#dir">Directorios</a></li><li class="nav-item"><a class="nav-link" href="#dir-detalles">Detalles</a></li><li class="nav-item"><a class="nav-link" href="{server_url}/{repo}" target="_blank" rel="noopener"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" class="me-1"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01 .37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33 .66 .07-.52 .28-.87 .51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87 .31-1.59 .82-2.15-.08-.2-.36-1.02 .08-2.12 0 0 .67-.21 2.2 .82 .64-.18 1.32-.27 2-.27s1.36 .09 2 .27c1.53-1.04 2.2-.82 2.2-.82 .44 1.1 .16 1.92 .08 2.12 .51 .56 .82 1.27 .82 2.15 0 3.07-1.87 3.75-3.65 3.95 .29 .25 .54 .73 .54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21 .15 .46 .55 .38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span class="ms-1"><code>{repo or "—"}</code></span></a></li></ul></div></div></nav>')
           html.append('<div class="container my-4">')
           html.append(f'<h1 class="mb-3">Reporte Dependabot</h1><p class="text-muted">Generado: {ts} • Repositorio: <a href="{server_url}/{repo}" target="_blank" rel="noopener" class="text-decoration-none"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" class="me-1"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><code>{repo or "—"}</code></a></p>')
           
@@ -1127,7 +1126,6 @@ jobs:
               html.append(f'<tr><td>{k}</td><td>{total_agg[k]}</td></tr>')
           html.append('</tbody></table>')
           html.append('<div class="alert alert-info" role="alert">🔎 Tipos basados en <a href="https://semver.org/" target="_blank" rel="noopener">SemVer</a>: 🔺 major • 🟡 minor • 🟢 patch • 🔹 other</div>')
-          html.append('<div class="row g-2 mt-2"><div class="col-12"><canvas id="chartTypes" height="120"></canvas></div><div class="col-12"><canvas id="chartEcos" height="120"></canvas></div></div>')
           html.append('</div>')
           html.append('<div class="col-md-6"><div class="section-card">')
           html.append('<p>📁 Rutas de repositorio:</p><ul class="list-group">')
@@ -1139,7 +1137,7 @@ jobs:
                   html.append(f'<li class="list-group-item"><code>{d}</code></li>')
           html.append('</ul></div></div>')
           html.append('</div>')
-          html.append('<div class="row g-3 mt-2"><div class="col-md-6">')
+          html.append('<div class="row g-3 mt-2"><div class="col-12">')
           html.append('<h2 id="dir" class="mb-2">Métricas por directorio</h2>')
           html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Directorio</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
           for d in sorted(dir_agg.keys()):
@@ -1150,13 +1148,6 @@ jobs:
               else:
                   cell = f'<code>{d}</code>'
               html.append(f'<tr><td>{cell}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
-          html.append('</tbody></table>')
-          html.append('</div><div class="col-md-6">')
-          html.append('<h2 id="eco" class="mb-2">Métricas por ecosistema</h2>')
-          html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
-          for e in sorted(eco_agg.keys()):
-              v = eco_agg[e]
-              html.append(f'<tr><td>{e}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
           html.append('</div></div>')
 
@@ -1215,22 +1206,9 @@ jobs:
           except Exception:
               alerts = []
           if alerts:
-              sev_agg = {}
-              for a in alerts:
-                  if isinstance(a, dict):
-                      s = (a.get('severity','') or 'unknown').lower()
-                      sev_agg[s] = sev_agg.get(s,0)+1
-              html.append('<div class="row">')
-              html.append('<div class="col-md-4">')
-              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Severidad</th><th>Cantidad</th></tr></thead><tbody>')
-              for k in ['critical','high','moderate','low','unknown']:
-                  if k in sev_agg:
-                      html.append(f'<tr><td>{k}</td><td>{sev_agg[k]}</td></tr>')
-              html.append('</tbody></table>')
-              html.append('</div>')
-              html.append('<div class="col-md-8">')
-              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Paquete</th><th>Severidad</th><th>Ecosistema</th><th>Manifest</th><th>Referencia</th></tr></thead><tbody>')
-              for a in alerts[:20]:
+              html.append('<div class="table-responsive">')
+              html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Paquete</th><th>Severidad</th><th>CVSS</th><th>Ecosistema</th><th>Manifest</th><th>GHSA</th><th>CVE</th><th>Resumen</th><th>Rango</th><th>Fix</th></tr></thead><tbody>')
+              for a in alerts[:50]:
                   if not isinstance(a, dict):
                       continue
                   dep = a.get('dependency') if isinstance(a.get('dependency'), dict) else {}
@@ -1240,18 +1218,17 @@ jobs:
                   eco = pkg_obj.get('ecosystem') or '—'
                   manifest = a.get('manifest_path','') or '—'
                   adv = a.get('security_advisory') if isinstance(a.get('security_advisory'), dict) else {}
-                  ghsa = adv.get('ghsa_id','') or a.get('ghsa_id','') or ''
-                  cve = adv.get('cve_id','') or a.get('cve_id','') or ''
-                  ref = ''
-                  if ghsa:
-                      ref = f'<a href="https://github.com/advisories/{ghsa}" target="_blank" rel="noopener">{ghsa}</a>'
-                  elif cve:
-                      ref = f'<a href="https://nvd.nist.gov/vuln/detail/{cve}" target="_blank" rel="noopener">{cve}</a>'
-                  else:
-                      ref = '—'
-                  html.append(f'<tr><td>{pkg}</td><td>{sev}</td><td>{eco}</td><td><code>{manifest}</code></td><td>{ref}</td></tr>')
+                  ghsa = adv.get('ghsa_id') or '—'
+                  cve = adv.get('cve_id') or ''
+                  cvss_obj = adv.get('cvss') if isinstance(adv.get('cvss'), dict) else {}
+                  cvss = cvss_obj.get('score') if isinstance(cvss_obj.get('score'), (int,float)) else '—'
+                  summary = adv.get('summary') or '—'
+                  rng = a.get('vulnerable_version_range') or a.get('vulnerable_requirements') or '—'
+                  fix = a.get('fixed_version') or '—'
+                  ghsa_ref = f'<a href="https://github.com/advisories/{ghsa}" target="_blank" rel="noopener">{ghsa}</a>' if ghsa != '—' else '—'
+                  cve_ref = f'<a href="https://nvd.nist.gov/vuln/detail/{cve}" target="_blank" rel="noopener">{cve}</a>' if cve else '—'
+                  html.append(f'<tr><td>{pkg}</td><td>{sev}</td><td>{cvss}</td><td>{eco}</td><td><code>{manifest}</code></td><td>{ghsa_ref}</td><td>{cve_ref}</td><td>{summary}</td><td><code>{rng}</code></td><td><code>{fix}</code></td></tr>')
               html.append('</tbody></table>')
-              html.append('</div>')
               html.append('</div>')
           else:
               html.append('<div class="alert alert-success" role="alert">No se detectaron alertas abiertas de Dependabot o no hay permisos para leerlas.</div>')
@@ -1266,11 +1243,11 @@ jobs:
             'let chartTypes, chartEcos;\n' 
             'function initCharts(){try{const ct=document.getElementById("chartTypes");const ce=document.getElementById("chartEcos");if(ct){chartTypes=new Chart(ct,{type:"bar",data:{labels:["major","minor","patch","other"],datasets:[{label:"Tipos",data:[' + ','.join(str(total_agg[k]) for k in ['major','minor','patch','other']) + '],backgroundColor:["#dc3545","#ffc107","#198754","#6c757d"]}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:cc.text},grid:{color:cc.grid}},y:{ticks:{color:cc.text},grid:{color:cc.grid}}}});} if(ce){chartEcos=new Chart(ce,{type:"doughnut",data:{labels:' + json.dumps(sorted(list(eco_agg.keys()))) + ',datasets:[{data:' + json.dumps([eco_agg[e]['major']+eco_agg[e]['minor']+eco_agg[e]['patch']+eco_agg[e]['other'] for e in sorted(eco_agg.keys())]) + ',backgroundColor:["#0d6efd","#6610f2","#6f42c1","#20c997","#fd7e14","#198754","#dc3545","#6c757d"]}]},options:{responsive:true,plugins:{legend:{labels:{color:cc.text}}}});} }catch(e){}}\n' 
             'function applyThemeToCharts(){cc=cssColors();if(chartTypes){chartTypes.options.scales.x.ticks.color=cc.text;chartTypes.options.scales.x.grid.color=cc.grid;chartTypes.options.scales.y.ticks.color=cc.text;chartTypes.options.scales.y.grid.color=cc.grid;chartTypes.update();} if(chartEcos){chartEcos.options.plugins.legend.labels.color=cc.text;chartEcos.update();}} \n' 
-            'document.addEventListener("DOMContentLoaded",()=>{initCharts();});\n' 
-            'function getStoredTheme(){return localStorage.getItem("theme")||"auto";}\n' 
-            'function systemTheme(){try{return window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}catch(e){return "light";}}\n' 
-            'function applyTheme(mode){const th=mode==="auto"?systemTheme():mode;document.documentElement.setAttribute("data-bs-theme",th);localStorage.setItem("theme",mode);document.querySelectorAll("[data-bs-theme-value]").forEach(b=>{b.classList.toggle("active", b.getAttribute("data-bs-theme-value")==mode);});applyThemeToCharts();}\n' 
-            '(function(){applyTheme(getStoredTheme());try{window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{if(getStoredTheme()==="auto"){applyTheme("auto");}});}catch(e){} document.querySelectorAll("[data-bs-theme-value]").forEach(b=>b.addEventListener("click",()=>applyTheme(b.getAttribute("data-bs-theme-value"))));})();\n' 
+            ''
+            ''
+            ''
+            ''
+            ''
           '</script>')
           html.append('</body></html>')
           with open(html_path,'w',encoding='utf-8') as f:
