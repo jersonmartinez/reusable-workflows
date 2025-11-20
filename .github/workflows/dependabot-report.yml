@@ -3305,3 +3305,25 @@ jobs:
           body += f"Descargar reportes desde el run: {run_link}\n"
           subprocess.run(['gh','issue','comment',num,'--repo',repo,'--body',body], check=False)
           PY
+
+      - name: 🧹 Eliminar artefactos temporales
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - << 'PY'
+          import os, json, subprocess
+          repo = os.getenv('REPO')
+          run_id = os.getenv('RUN_ID')
+          try:
+              r = subprocess.run(['gh','api',f'repos/{repo}/actions/runs/{run_id}/artifacts'], capture_output=True, text=True)
+              artifacts = json.loads(r.stdout).get('artifacts', []) if r.returncode == 0 else []
+          except Exception:
+              artifacts = []
+          for a in artifacts:
+              name = a.get('name','')
+              aid = a.get('id')
+              if name in ('tmp-html','tmp-pdf') and aid:
+                  subprocess.run(['gh','api','-X','DELETE',f'repos/{repo}/actions/artifacts/{aid}'], check=False)
+          PY
