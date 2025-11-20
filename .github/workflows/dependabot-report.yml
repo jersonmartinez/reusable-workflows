@@ -980,6 +980,10 @@ jobs:
           ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
           repo = os.getenv('GITHUB_REPOSITORY','')
           server_url = os.getenv('GITHUB_SERVER_URL','https://github.com')
+          run_id = os.getenv('GITHUB_RUN_ID','') or os.getenv('RUN_ID','')
+          run_link = f"{server_url}/{repo}/actions/runs/{run_id}" if run_id else ''
+          owner = repo.split('/')[0] if '/' in (repo or '') else (repo or '')
+          org_link = f"{server_url}/{owner}" if owner else ''
           html = []
           html.append('<!doctype html><html data-bs-theme="dark"><head><meta charset="utf-8"><title>Reporte Dependabot</title>')
           html.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
@@ -1224,7 +1228,8 @@ jobs:
                   html.append(f'<li class="list-group-item"><code>{d}</code></li>')
           html.append('</ul></div></div>')
           html.append('</div>')
-          html.append('<div class="row g-3 mt-2"><div class="col-12">')
+          html.append('<div class="row g-3 mt-2">')
+          html.append('<div class="col-md-6">')
           html.append('<h2 id="dir" class="mb-2">Métricas por directorio</h2>')
           html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Directorio</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
           for d in sorted(dir_agg.keys()):
@@ -1236,16 +1241,16 @@ jobs:
                   cell = f'<code>{d}</code>'
               html.append(f'<tr><td>{cell}</td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
-          html.append('</div></div>')
-
-          html.append('<div class="row g-3 mt-2"><div class="col-12">')
+          html.append('</div>')
+          html.append('<div class="col-md-6">')
           html.append('<h2 id="eco" class="mb-2">Métricas por ecosistema</h2>')
           html.append('<table class="table table-striped table-bordered table-sm mb-2"><thead><tr><th>Ecosistema</th><th>major</th><th>minor</th><th>patch</th><th>other</th></tr></thead><tbody>')
           for e in sorted(eco_agg.keys()):
               v = eco_agg[e]
               html.append(f'<tr><td><code>{e}</code></td><td>{v["major"]}</td><td>{v["minor"]}</td><td>{v["patch"]}</td><td>{v["other"]}</td></tr>')
           html.append('</tbody></table>')
-          html.append('</div></div>')
+          html.append('</div>')
+          html.append('</div>')
 
           html.append('<h2 id="dir-detalles" class="mt-4">📁 Detalles por directorio</h2>')
           def type_badges(t):
@@ -1391,7 +1396,25 @@ jobs:
           else:
               html.append('<div class="alert alert-success" role="alert">No se detectaron alertas abiertas de Dependabot o no hay permisos para leerlas.</div>')
           html.append('<div class="alert alert-info mt-4"><h4 class="mb-2">Guía para empezar</h4><ol class="mb-0"><li>Revisa el <b>Resumen por severidad</b> para identificar alertas críticas.</li><li>Verifica los <b>Paquetes más afectados</b> para priorizar fixes.</li><li>Analiza la <b>Cobertura por directorio</b> para detectar rutas con alta densidad.</li><li>Consulta los PRs abiertos y el <b>Reporte consolidado</b> para planificar acciones.</li></ol></div>')
+          html.append('<div class="section-card"><h4 class="mb-2">Recomendaciones de remediación</h4><ul class="mb-0"><li>Prioriza <b>critical/high</b> y aplica versiones seguras indicadas en <b>Fix</b> del detalle de alertas.</li><li>Para <b>github_actions</b>, actualiza el tag en <code>/.github/workflows</code> y verifica permisos mínimos en cada job.</li><li>En <b>pip/npm</b>, actualiza el manifiesto (<code>requirements.txt</code>, <code>package.json</code>) y genera lockfiles limpios.</li><li>Valida compatibilidad en staging y habilita <b>automerge</b> sólo para <b>patch/minor</b> con checks verdes.</li><li>Documenta paquetes sin fix disponible y da seguimiento con los mantenedores.</li></ul></div>')
           html.append('</div>')
+
+          html.append('<footer class="bg-body-tertiary border-top py-3 mt-4">')
+          html.append('<div class="container d-flex flex-wrap align-items-center justify-content-between">')
+          html.append('<div class="d-flex align-items-center mb-2 mb-md-0"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2"><strong>PRB</strong></div>')
+          html.append('<div class="small">')
+          if issue_url:
+              html.append(f'🧾 <a href="{issue_url}" target="_blank" rel="noopener" class="text-decoration-none">Issue del reporte</a> • ')
+          html.append(f'📦 <a href="{server_url}/{repo}" target="_blank" rel="noopener" class="text-decoration-none">Repositorio</a> • ')
+          if org_link:
+              html.append(f'🏢 <a href="{org_link}" target="_blank" rel="noopener" class="text-decoration-none">Organización</a> • ')
+          if run_link:
+              html.append(f'⚙️ <a href="{run_link}" target="_blank" rel="noopener" class="text-decoration-none">GitHub Actions (artefactos PDF/HTML)</a> • ')
+          html.append(f'🕒 Generado: {ts}')
+          html.append('</div>')
+          html.append('<div class="w-100 mt-2 small text-muted">❤️🚀 Creado con amor por el equipo de DevOps</div>')
+          html.append('</div>')
+          html.append('</footer>')
           
           html.append('<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>')
           html.append('<script>\n' 
