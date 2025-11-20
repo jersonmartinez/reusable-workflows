@@ -614,6 +614,7 @@ jobs:
           PDF_PATH: docs/${{ inputs.pdf_report_name }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
         run: |
           python3 -m pip install --user reportlab || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
@@ -734,12 +735,16 @@ jobs:
               eco_agg.setdefault(e, {'major':0,'minor':0,'patch':0,'other':0})
               eco_agg[e][typ] += 1
 
-          flow.append(Paragraph('Índice', styles['Heading2']))
+          flow.append(Paragraph('■ Índice', styles['Heading2']))
           # Tabla de contenidos para navegación rápida del documento
-          flow.append(Paragraph('1. Resumen general', styles['Normal']))
-          flow.append(Paragraph('2. Métricas por directorio', styles['Normal']))
-          flow.append(Paragraph('3. Métricas por ecosistema', styles['Normal']))
-          flow.append(Paragraph('4. Listado de PRs', styles['Normal']))
+          flow.append(Paragraph('1. Resumen por estado de PRs', styles['Normal']))
+          flow.append(Paragraph('2. Resumen general', styles['Normal']))
+          flow.append(Paragraph('3. Métricas por directorio', styles['Normal']))
+          flow.append(Paragraph('4. Métricas por ecosistema', styles['Normal']))
+          flow.append(Paragraph('5. Alertas de seguridad', styles['Normal']))
+          flow.append(Paragraph('6. Recomendaciones de remediación', styles['Normal']))
+          flow.append(Paragraph('7. Listado de PRs', styles['Normal']))
+          flow.append(Paragraph('8. PRs prioritarios', styles['Normal']))
           flow.append(Spacer(1,12))
           open_rows, merged_rows, closed_rows = [], [], []
           for pr in prs:
@@ -750,25 +755,25 @@ jobs:
                   merged_rows.append(pr)
               elif st == 'closed':
                   closed_rows.append(pr)
-          flow.append(Paragraph('Resumen por estado de PRs', styles['Heading2']))
+          flow.append(Paragraph('■ Resumen por estado de PRs', styles['Heading2']))
           flow.append(Spacer(1,6))
           data_kpi = [['Métrica','Cantidad'],['PRs totales',len(prs)],['Abiertos',len(open_rows)],['Fusionados',len(merged_rows)],['Cerrados',len(closed_rows)]]
           tbl_kpi = Table(data_kpi, repeatRows=1, colWidths=[doc.width/2]*2)
-          tbl_kpi.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+          tbl_kpi.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
           flow.append(tbl_kpi)
           flow.append(Spacer(1,12))
 
-          flow.append(Paragraph('📊 Resumen general', styles['Heading2']))
+          flow.append(Paragraph('■ Resumen general', styles['Heading2']))
           flow.append(Spacer(1,6))
           data_summary = [['Tipo','Cantidad'],['major',total_agg['major']],['minor',total_agg['minor']],['patch',total_agg['patch']],['other',total_agg['other']]]
           tbl_sum = Table(data_summary, repeatRows=1, colWidths=[doc.width/2]*2)
-          tbl_sum.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+          tbl_sum.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
           flow.append(tbl_sum)
           flow.append(Spacer(1,6))
           flow.append(Paragraph("Tipos basados en <link href='https://semver.org/'>SemVer</link>: major • minor • patch • other", styles['Italic']))
           flow.append(Spacer(1,12))
 
-          flow.append(Paragraph('Métricas por directorio', styles['Heading2']))
+          flow.append(Paragraph('■ Métricas por directorio', styles['Heading2']))
           flow.append(Spacer(1,6))
           from reportlab.platypus import Paragraph
           data_dir = [['Directorio','major','minor','patch','other']]
@@ -781,18 +786,18 @@ jobs:
               row = [d_cell, dir_agg[d]['major'], dir_agg[d]['minor'], dir_agg[d]['patch'], dir_agg[d]['other']]
               data_dir.append(row)
           tbl_dir = Table(data_dir, repeatRows=1, colWidths=[doc.width/5]*5)
-          tbl_dir.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+          tbl_dir.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
           flow.append(tbl_dir)
           flow.append(Spacer(1,12))
 
-          flow.append(Paragraph('Métricas por ecosistema', styles['Heading2']))
+          flow.append(Paragraph('■ Métricas por ecosistema', styles['Heading2']))
           flow.append(Spacer(1,6))
           data_eco = [['Ecosistema','major','minor','patch','other']]
           for e in sorted(eco_agg.keys()):
               row = [e, eco_agg[e]['major'], eco_agg[e]['minor'], eco_agg[e]['patch'], eco_agg[e]['other']]
               data_eco.append(row)
           tbl_eco = Table(data_eco, repeatRows=1, colWidths=[doc.width/5]*5)
-          tbl_eco.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+          tbl_eco.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
           flow.append(tbl_eco)
           flow.append(Spacer(1,12))
 
@@ -813,14 +818,14 @@ jobs:
                   severity_agg[s] = severity_agg.get(s,0)+1
 
           if alerts:
-              flow.append(Paragraph('Alertas de Seguridad (abiertas)', styles['Heading2']))
+              flow.append(Paragraph('■ Alertas de Seguridad (abiertas)', styles['Heading2']))
               flow.append(Spacer(1,6))
               data_sec = [['Severidad','Cantidad']]
               for k in ['critical','high','moderate','low','unknown']:
                   if k in severity_agg:
                       data_sec.append([k, severity_agg[k]])
               tbl_sec = Table(data_sec, repeatRows=1, colWidths=[doc.width/2]*2)
-              tbl_sec.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+              tbl_sec.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
               flow.append(tbl_sec)
               flow.append(Spacer(1,6))
               pkg_stats = {}
@@ -836,13 +841,13 @@ jobs:
                   if fx:
                       ps['fix'] = 'Sí'
                   pkg_stats[name] = ps
-              flow.append(Paragraph('Paquetes más afectados', styles['Heading2']))
+              flow.append(Paragraph('■ Paquetes más afectados', styles['Heading2']))
               flow.append(Spacer(1,6))
               data_pkg = [['Paquete','Cantidad','Fix']]
               for name, ps in sorted(pkg_stats.items(), key=lambda kv: kv[1]['count'], reverse=True)[:10]:
                   data_pkg.append([name, ps['count'], ps['fix']])
               tbl_pkg = Table(data_pkg, repeatRows=1, colWidths=[doc.width/3]*3)
-              tbl_pkg.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+              tbl_pkg.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
               flow.append(tbl_pkg)
               flow.append(Spacer(1,6))
               dir_pr_counts = {}
@@ -861,7 +866,7 @@ jobs:
                   elif mp:
                       d = '/'
                   alerts_dir_counts[d] = alerts_dir_counts.get(d,0)+1
-              flow.append(Paragraph('Cobertura por directorio', styles['Heading2']))
+              flow.append(Paragraph('■ Cobertura por directorio', styles['Heading2']))
               flow.append(Spacer(1,6))
               data_cov = [['Directorio','PRs','Alertas','Densidad']]
               for d in sorted(set(list(dir_pr_counts.keys()) + list(alerts_dir_counts.keys()))):
@@ -871,7 +876,7 @@ jobs:
                   cell = Paragraph(f"<link href='{server_url}/{repo_url}/tree/main" + ('' if d == '/' else d) + f"'>{d}</link>", styles['Normal']) if (d and d.startswith('/')) else Paragraph(d or '/', styles['Normal'])
                   data_cov.append([cell, prs_c, alt_c, dens])
               tbl_cov = Table(data_cov, repeatRows=1, colWidths=[doc.width/4]*4)
-              tbl_cov.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+              tbl_cov.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
               flow.append(tbl_cov)
               flow.append(Spacer(1,6))
               data_alerts = [['Paquete','Severidad','CVSS','Ecosistema','Manifest','GHSA','CVE','Resumen','Rango','Fix']]
@@ -897,11 +902,11 @@ jobs:
                   man_ref = Paragraph(f"<link href='{server_url}/{repo_url}/blob/main/{manifest}'><code>{manifest}</code></link>", styles['Normal']) if manifest != '—' and isinstance(manifest,str) else Paragraph(f"<code>{manifest}</code>", styles['Normal'])
                   data_alerts.append([pkg, sev, cvss, eco, man_ref, ghsa_ref, cve_ref, summary, rng, fix])
               tbl_alerts = Table(data_alerts, repeatRows=1, colWidths=[doc.width/10]*10)
-              tbl_alerts.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+              tbl_alerts.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
               flow.append(tbl_alerts)
               flow.append(Spacer(1,12))
 
-          flow.append(Paragraph('Recomendaciones de remediación', styles['Heading2']))
+          flow.append(Paragraph('■ Recomendaciones de remediación', styles['Heading2']))
           flow.append(Spacer(1,6))
           ecos_present = sorted([e for e in eco_agg.keys() if e and e != 'unknown'])
           recos = []
@@ -926,7 +931,7 @@ jobs:
           flow.append(ListFlowable(items, bulletType='bullet'))
           flow.append(Spacer(1,12))
 
-          flow.append(Paragraph('Listado de PRs', styles['Heading2']))
+          flow.append(Paragraph('■ Listado de PRs', styles['Heading2']))
           flow.append(Spacer(1,6))
           from urllib.parse import quote_plus
           def age_days(iso):
@@ -967,7 +972,7 @@ jobs:
                   return 'merged' if merged_at else 'closed'
               except Exception:
                   return 'closed'
-          data = [['PR','Paquete','Desde','Hasta','Dir','Estado','Riesgo','Edad','Labels','Creado']]
+          data = [['PR','Paquete','Versiones','Dir','Estado','Riesgo','Edad','Creado']]
           for pr in prs:
               num = pr.get('number','')
               title = pr.get('title','')
@@ -978,7 +983,6 @@ jobs:
               except Exception:
                   created_fmt = 'N/A'
               labels_list = pr.get('labels',[])
-              labels_html = ' '.join([f"<link href='{server_url}/{repo_url}/pulls?q=is%3Apr+label%3A{quote_plus(l.get('name',''))}+author%3Aapp%2Fdependabot'>{l.get('name','')}</link>" for l in labels_list if l.get('name','')]) or '—'
               state = current_state_for(pr)
               d = meta.get('dir') or directory_of(pr)
               typ = 'other'
@@ -990,15 +994,26 @@ jobs:
               age = age_days(created)
               risklev = risk_level(typ, age, labels_list)
               risk_txt = {'critical':'Crítico','high':'Alto','medium':'Medio','low':'Bajo'}.get(risklev,'Bajo')
-              from_badge = Paragraph(meta.get('from',''), styles['Normal'])
-              to_badge = Paragraph(meta.get('to',''), styles['Normal'])
+              vers_cell = Paragraph(f"{meta.get('from','')} → {meta.get('to','')}", styles['Normal'])
               dir_cell = Paragraph(f"<link href='{server_url}/{repo_url}/tree/main" + ('' if d == '/' else d) + f"'>{d}</link>", styles['Normal']) if (d and d.startswith('/')) else Paragraph(d or '/', styles['Normal'])
-              labels_cell = Paragraph(labels_html, styles['Normal'])
               pr_cell = Paragraph(f"<link href='{server_url}/{repo_url}/pull/{num}'>#{num}</link>", styles['Normal'])
               age_cell = Paragraph(((str(age)+' d') if isinstance(age,int) else 'N/A'), styles['Normal'])
               risk_cell = Paragraph(risk_txt, styles['Normal'])
-              data.append([pr_cell, meta.get('name','—'), from_badge, to_badge, dir_cell, state, risk_cell, age_cell, labels_cell, created_fmt])
-          table = Table(data, repeatRows=1, colWidths=[doc.width/10]*10)
+              data.append([pr_cell, meta.get('name','—'), vers_cell, dir_cell, state, risk_cell, age_cell, created_fmt])
+          table = Table(
+              data,
+              repeatRows=1,
+              colWidths=[
+                  doc.width*0.10,  # PR
+                  doc.width*0.26,  # Paquete
+                  doc.width*0.18,  # Versiones
+                  doc.width*0.16,  # Dir
+                  doc.width*0.10,  # Estado
+                  doc.width*0.08,  # Riesgo
+                  doc.width*0.06,  # Edad
+                  doc.width*0.06   # Creado
+              ]
+          )
           table.setStyle(TableStyle([
               ('BACKGROUND',(0,0),(-1,0),colors.lightgrey),
               ('TEXTCOLOR',(0,0),(-1,0),colors.black),
@@ -1028,7 +1043,7 @@ jobs:
               prio = sorted(prio, key=lambda x: (x['riskw'], x['age']), reverse=True)[:10]
               if prio:
                   flow.append(Spacer(1,12))
-                  flow.append(Paragraph('PRs prioritarios', styles['Heading2']))
+                  flow.append(Paragraph('■ PRs prioritarios', styles['Heading2']))
                   flow.append(Spacer(1,6))
                   data_prio = [['PR','Paquete','Tipo','Riesgo','Edad','Dir']]
                   for it in prio:
@@ -1043,8 +1058,57 @@ jobs:
                       dir_cell = Paragraph(f"<link href='{server_url}/{repo_url}/tree/main" + ('' if d == '/' else d) + f"'>{d}</link>", styles['Normal']) if (d and d.startswith('/')) else Paragraph(d or '/', styles['Normal'])
                       data_prio.append([pr_cell, meta.get('name','—'), typ, risk_txt, age_txt, dir_cell])
                   tbl_prio = Table(data_prio, repeatRows=1, colWidths=[doc.width/6]*6)
-                  tbl_prio.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey)]))
+                  tbl_prio.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
                   flow.append(tbl_prio)
+          flow.append(Spacer(1,12))
+          flow.append(Paragraph('■ Información del repositorio', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          owner = (repo_url.split('/')[0] if '/' in (repo_url or '') else (repo_url or ''))
+          repo_link_p = Paragraph(f"<link href='{server_url}/{repo_url}'>{repo_url}</link>", styles['Normal'])
+          org_link_p = Paragraph(f"<link href='{server_url}/{owner}'>{owner}</link>", styles['Normal']) if owner else Paragraph('—', styles['Normal'])
+          run_id = os.getenv('GITHUB_RUN_ID','') or os.getenv('RUN_ID','')
+          run_link_p = Paragraph(f"<link href='{server_url}/{repo_url}/actions/runs/{run_id}'>Run de GitHub Actions</link>", styles['Normal']) if run_id else Paragraph('—', styles['Normal'])
+          info_tbl = [['Campo','Valor'],['Repositorio', repo_link_p],['Organización', org_link_p],['Último run', run_link_p]]
+          tbl_info = Table(info_tbl, repeatRows=1, colWidths=[doc.width/3, doc.width*2/3])
+          tbl_info.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
+          flow.append(tbl_info)
+          flow.append(Spacer(1,12))
+
+          flow.append(Paragraph('■ Enlaces útiles', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          config_url = f"{server_url}/{repo_url}/blob/main/.github/dependabot.yml"
+          security_url = f"{server_url}/{repo_url}/settings/security_analysis"
+          insights_url = f"{server_url}/{repo_url}/network/dependencies"
+          labels_url = f"{server_url}/{repo_url}/labels"
+          prs_url = f"{server_url}/{repo_url}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
+          advisories_url = f"{server_url}/{repo_url}/security/dependabot"
+          links_tbl = [['Nombre','Enlace'],
+                       ['Ver Configuración', Paragraph(f"<link href='{config_url}'>Config</link>", styles['Normal'])],
+                       ['Security Settings', Paragraph(f"<link href='{security_url}'>Security</link>", styles['Normal'])],
+                       ['Dependency Graph', Paragraph(f"<link href='{insights_url}'>Graph</link>", styles['Normal'])],
+                       ['Labels', Paragraph(f"<link href='{labels_url}'>Labels</link>", styles['Normal'])],
+                       ['PRs de Dependabot', Paragraph(f"<link href='{prs_url}'>PRs</link>", styles['Normal'])],
+                       ['Security Alerts', Paragraph(f"<link href='{advisories_url}'>Alerts</link>", styles['Normal'])]]
+          tbl_links = Table(links_tbl, repeatRows=1, colWidths=[doc.width/3, doc.width*2/3])
+          tbl_links.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
+          flow.append(tbl_links)
+          flow.append(Spacer(1,12))
+
+          flow.append(Paragraph('■ Reporte interactivo (HTML)', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          flow.append(Paragraph('Para mejor visualización y navegación, utiliza el reporte HTML disponible como artefacto en el run de GitHub Actions.', styles['Italic']))
+          if run_id:
+              flow.append(Paragraph(f"<link href='{server_url}/{repo_url}/actions/runs/{run_id}'>Descargar HTML</link>", styles['Normal']))
+          flow.append(Spacer(1,12))
+
+          flow.append(Paragraph('■ Recomendaciones finales', styles['Heading2']))
+          flow.append(Spacer(1,6))
+          items2 = [
+              ListItem(Paragraph('Prioriza critical/high y aplica versiones seguras.', styles['Normal'])),
+              ListItem(Paragraph('Habilita automerge en patch/minor con checks verdes.', styles['Normal'])),
+              ListItem(Paragraph('Documenta paquetes sin fix y da seguimiento.', styles['Normal']))
+          ]
+          flow.append(ListFlowable(items2, bulletType='bullet'))
           doc.build(flow)
           created = True
           out = os.environ.get('GITHUB_OUTPUT')
@@ -1628,12 +1692,12 @@ jobs:
           html.append('<h6 class="fw-semibold mb-2">Reporte</h6>')
           html.append('<ul class="list-unstyled mb-0 small">')
           if issue_url:
-              html.append(f'<li class="mb-1"><a href="{issue_url}" target="_blank" rel="noopener" class="text-decoration-none">Issue del reporte</a></li>')
-          html.append(f'<li class="mb-1"><a href="{server_url}/{repo}" target="_blank" rel="noopener" class="text-decoration-none">Repositorio</a></li>')
+              html.append(f'<li class="mb-1"><a href="{issue_url}" target="_blank" rel="noopener" class="text-decoration-none">🧾 Issue del reporte</a></li>')
+          html.append(f'<li class="mb-1"><a href="{server_url}/{repo}" target="_blank" rel="noopener" class="text-decoration-none">📁 Repositorio</a></li>')
           if org_link:
-              html.append(f'<li class="mb-1"><a href="{org_link}" target="_blank" rel="noopener" class="text-decoration-none">Organización</a></li>')
+              html.append(f'<li class="mb-1"><a href="{org_link}" target="_blank" rel="noopener" class="text-decoration-none">🏢 Organización</a></li>')
           if run_link:
-              html.append(f'<li class="mb-1"><a href="{run_link}" target="_blank" rel="noopener" class="text-decoration-none">GitHub Actions (artefactos PDF/HTML)</a></li>')
+              html.append(f'<li class="mb-1"><a href="{run_link}" target="_blank" rel="noopener" class="text-decoration-none">⚙️ GitHub Actions (artefactos PDF/HTML)</a></li>')
           html.append('</ul>')
           html.append('</div>')
           html.append('<div class="col-6 col-md-4 mb-3">')
@@ -1645,11 +1709,11 @@ jobs:
           prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
           advisories_url = f"{server_url}/{repo}/security/dependabot"
           html.append('<ul class="list-unstyled mb-0 small">')
-          html.append(f'<li class="mb-1"><a href="{config_url}" target="_blank" rel="noopener" class="text-decoration-none">Configuración</a></li>')
-          html.append(f'<li class="mb-1"><a href="{insights_url}" target="_blank" rel="noopener" class="text-decoration-none">Dependency Graph</a></li>')
-          html.append(f'<li class="mb-1"><a href="{prs_url}" target="_blank" rel="noopener" class="text-decoration-none">PRs de Dependabot</a></li>')
-          html.append(f'<li class="mb-1"><a href="{labels_url}" target="_blank" rel="noopener" class="text-decoration-none">Labels</a></li>')
-          html.append(f'<li class="mb-1"><a href="{advisories_url}" target="_blank" rel="noopener" class="text-decoration-none">Security Alerts</a></li>')
+          html.append(f'<li class="mb-1"><a href="{config_url}" target="_blank" rel="noopener" class="text-decoration-none">📝 Configuración</a></li>')
+          html.append(f'<li class="mb-1"><a href="{insights_url}" target="_blank" rel="noopener" class="text-decoration-none">📊 Dependency Graph</a></li>')
+          html.append(f'<li class="mb-1"><a href="{prs_url}" target="_blank" rel="noopener" class="text-decoration-none">🔄 PRs de Dependabot</a></li>')
+          html.append(f'<li class="mb-1"><a href="{labels_url}" target="_blank" rel="noopener" class="text-decoration-none">🏷️ Labels</a></li>')
+          html.append(f'<li class="mb-1"><a href="{advisories_url}" target="_blank" rel="noopener" class="text-decoration-none">🚨 Security Alerts</a></li>')
           html.append('</ul>')
           html.append('</div>')
           
