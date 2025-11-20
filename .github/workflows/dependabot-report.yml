@@ -119,6 +119,7 @@ jobs:
     outputs:
       prs_data: ${{ steps.detect_prs.outputs.prs_data }}
       issue_url: ${{ steps.create_issue.outputs.issue_url }}
+      alerts_data: ${{ steps.collect_alerts.outputs.alerts_data }}
 
     steps:
       - name: 🚀 Checkout Repository
@@ -367,6 +368,7 @@ jobs:
           POLL_INTERVAL: ${{ inputs.poll_interval_seconds }}
           DEP_LOGINS: ${{ inputs.dependabot_logins }}
           PRS_STATE: ${{ inputs.prs_state }}
+          TRIGGER_DEPENDABOT_NOW: ${{ inputs.trigger_dependabot_now }}
         run: |
           python3 - << 'PY'
           import json, os, subprocess, time
@@ -490,8 +492,9 @@ jobs:
                   if fb2:
                       prs = fb2
               log(f"Immediate fallback PRs count: {len(prs)}")
-          deadline = time.time() + wait_minutes*60
-          while len(prs) == 0 and time.time() < deadline:
+          should_wait = (os.getenv('TRIGGER_DEPENDABOT_NOW','false') == 'true' and os.getenv('PRS_STATE','open') == 'open' and wait_minutes > 0)
+          deadline = time.time() + (wait_minutes*60 if should_wait else 0)
+          while should_wait and len(prs) == 0 and time.time() < deadline:
               time.sleep(poll_interval)
               prs = list_prs_api()
               log(f"Polling... PRs count: {len(prs)}")
@@ -510,6 +513,30 @@ jobs:
               f.write('\nEOF\n')
               f.write(f"prs_count={len(prs)}\n")
           print(f"📊 PRs detectados: {len(prs)}")
+          PY
+
+      - name: 📦 Recoger alertas de Dependabot
+        id: collect_alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - << 'PY'
+          import os, json, subprocess
+          repo = os.getenv('REPO','')
+          alerts = []
+          try:
+              r = subprocess.run(['gh','api', f'repos/{repo}/dependabot/alerts', '-f', 'state=open', '-f', 'per_page=100'], capture_output=True, text=True)
+              if r.returncode == 0 and r.stdout.strip():
+                  data = json.loads(r.stdout)
+                  if isinstance(data, list):
+                      alerts = data
+          except Exception:
+              alerts = []
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write('alerts_data<<EOF\n')
+              f.write(json.dumps(alerts))
+              f.write('\nEOF\n')
           PY
 
       - name: 💾 Guardar PRs detectados
@@ -885,9 +912,14 @@ jobs:
           repo = os.getenv('REPO','')
           try:
               import json as _j
-              r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
-              _tmp = _j.loads(r)
-              alerts = _tmp if isinstance(_tmp, list) else []
+              raw = os.getenv('ALERTS_JSON','').strip()
+              if raw:
+                  _tmp = _j.loads(raw)
+                  alerts = _tmp if isinstance(_tmp, list) else []
+              else:
+                  r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
+                  _tmp = _j.loads(r)
+                  alerts = _tmp if isinstance(_tmp, list) else []
           except Exception:
               alerts = []
           for a in alerts:
@@ -1636,9 +1668,14 @@ jobs:
           html.append('<h2 id="alertas" class="mt-4">🛡️ Alertas de Seguridad</h2>')
           try:
               import json as _j
-              r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
-              _tmp = _j.loads(r)
-              alerts = _tmp if isinstance(_tmp, list) else []
+              raw = os.getenv('ALERTS_JSON','').strip()
+              if raw:
+                  _tmp = _j.loads(raw)
+                  alerts = _tmp if isinstance(_tmp, list) else []
+              else:
+                  r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
+                  _tmp = _j.loads(r)
+                  alerts = _tmp if isinstance(_tmp, list) else []
           except Exception:
               alerts = []
           sev_agg = {}
@@ -2180,6 +2217,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HTML_PATH: docs/${{ inputs.html_report_name }}
           ISSUE_URL: ${{ needs.configure.outputs.issue_url }}
+          ALERTS_JSON: ${{ needs.configure.outputs.alerts_data }}
         run: |
           python3 - << 'PY'
           import json, os
@@ -2559,9 +2597,14 @@ jobs:
           html.append('<h2 id="alertas" class="mt-4">🛡️ Alertas de Seguridad</h2>')
           try:
               import json as _j
-              r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
-              _tmp = _j.loads(r)
-              alerts = _tmp if isinstance(_tmp, list) else []
+              raw = os.getenv('ALERTS_JSON','').strip()
+              if raw:
+                  _tmp = _j.loads(raw)
+                  alerts = _tmp if isinstance(_tmp, list) else []
+              else:
+                  r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
+                  _tmp = _j.loads(r)
+                  alerts = _tmp if isinstance(_tmp, list) else []
           except Exception:
               alerts = []
           sev_agg = {}
@@ -2748,6 +2791,7 @@ jobs:
           PDF_PATH: docs/${{ inputs.pdf_report_name }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          ALERTS_JSON: ${{ needs.configure.outputs.alerts_data }}
         run: |
           python3 -m pip install --user reportlab || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
@@ -2928,9 +2972,14 @@ jobs:
           repo = os.getenv('REPO','')
           try:
               import json as _j
-              r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
-              _tmp = _j.loads(r)
-              alerts = _tmp if isinstance(_tmp, list) else []
+              raw = os.getenv('ALERTS_JSON','').strip()
+              if raw:
+                  _tmp = _j.loads(raw)
+                  alerts = _tmp if isinstance(_tmp, list) else []
+              else:
+                  r = os.popen(f"gh api repos/{repo}/dependabot/alerts?state=open&per_page=100").read()
+                  _tmp = _j.loads(r)
+                  alerts = _tmp if isinstance(_tmp, list) else []
           except Exception:
               alerts = []
           for a in alerts:
