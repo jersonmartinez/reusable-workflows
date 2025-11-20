@@ -2768,8 +2768,8 @@ jobs:
               f.write(''.join(html))
           print(f"HTML generado en {html_path}")
           PY
-      - name: 📤 Subir HTML temporal
-        uses: actions/cache@v4
+      - name: ♻️ Guardar HTML en cache
+        uses: actions/cache/save@v4
         with:
           path: docs/${{ inputs.html_report_name }}
           key: dep-report-${{ github.run_id }}-html
@@ -3284,9 +3284,9 @@ jobs:
                   f.write('created=true\n')
           print(f"PDF generado en {pdf_path}")
           PY
-      - name: ♻️ Cachear PDF
+      - name: ♻️ Guardar PDF en cache
         if: ${{ steps.generate_pdf.outputs.created == 'true' }}
-        uses: actions/cache@v4
+        uses: actions/cache/save@v4
         with:
           path: docs/${{ inputs.pdf_report_name }}
           key: dep-report-${{ github.run_id }}-pdf
@@ -3299,24 +3299,30 @@ jobs:
     steps:
       - name: ♻️ Restaurar HTML desde cache
         if: ${{ inputs.generate_html_report }}
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: docs
+          path: docs/${{ inputs.html_report_name }}
           key: dep-report-${{ github.run_id }}-html
       - name: ♻️ Restaurar PDF desde cache
         if: ${{ inputs.generate_pdf_report && needs.report_pdf.outputs.pdf_created == 'true' }}
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
-          path: docs
+          path: docs/${{ inputs.pdf_report_name }}
           key: dep-report-${{ github.run_id }}-pdf
-      - name: 📤 Subir reportes combinados
+      - name: 📤 Subir HTML al artefacto combinado
+        if: ${{ inputs.generate_html_report }}
         uses: actions/upload-artifact@v4
         with:
           name: dependabot-reportes
-          path: |
-            docs/*.html
-            docs/*.pdf
-          if-no-files-found: warn
+          path: docs/${{ inputs.html_report_name }}
+          if-no-files-found: error
+      - name: 📤 Subir PDF al artefacto combinado
+        if: ${{ inputs.generate_pdf_report && needs.report_pdf.outputs.pdf_created == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-reportes
+          path: docs/${{ inputs.pdf_report_name }}
+          if-no-files-found: error
       - name: 💬 Comentar Issue con enlaces a reportes
         env:
           GH_TOKEN: ${{ github.token }}
