@@ -858,7 +858,7 @@ jobs:
               st = (pr.get('state','open') or '').lower()
               if st != 'closed':
                   return st
-              num = pr.get('number')
+              num = pr.get('number') or pr.get('num')
               try:
                   import json as _j
                   r = os.popen(f"gh api repos/{os.getenv('REPO','')}/pulls/{num}").read()
@@ -1124,7 +1124,7 @@ jobs:
               st = (pr.get('state','open') or '').lower()
               if st != 'closed':
                   return st
-              num = pr.get('number')
+              num = pr.get('number') or pr.get('num')
               try:
                   import json as _j
                   r = os.popen(f"gh api repos/{os.getenv('REPO','')}/pulls/{num}").read()
@@ -1424,7 +1424,7 @@ jobs:
               st = (pr.get('state','open') or '').lower()
               if st != 'closed':
                   return st
-              num = pr.get('number')
+              num = pr.get('number') or pr.get('num')
               try:
                   r = os.popen(f"gh api repos/{repo}/pulls/{num}").read()
                   data = json.loads(r)
@@ -1935,7 +1935,7 @@ jobs:
           issue_url = os.getenv('ISSUE_URL','')
           skip_labels = [s.strip().lower() for s in os.getenv('SKIP_CLOSE_LABELS','').split(',') if s.strip()]
           for pr in prs:
-              num = pr.get('number')
+              num = pr.get('number') or pr.get('num')
               if not num:
                   continue
               # Solo cerrar PRs que están abiertos
@@ -2121,8 +2121,11 @@ jobs:
               fast = os.getenv('FAST_SUMMARY','true').lower() == 'true'
 
               def state_of(pr):
+                  st = (pr.get('state','open') or '').lower()
+                  if st != 'closed':
+                      return st
                   num = pr.get('number')
-                  return pr.get('state','open') if fast else current_state(num)
+                  return current_state(num)
 
               def render_table(items, title, opened):
                   summary.append("<details open>\n" if opened else "<details>\n")
@@ -2449,7 +2452,7 @@ jobs:
               st = (pr.get('state','open') or '').lower()
               if st != 'closed':
                   return st
-              num = pr.get('number')
+              num = pr.get('number') or pr.get('num')
               try:
                   r = os.popen(f"gh api repos/{repo}/pulls/{num}").read()
                   data = json.loads(r)
@@ -2875,6 +2878,14 @@ jobs:
         with:
           path: docs/${{ inputs.html_report_name }}
           key: dep-report-${{ github.run_id }}-html
+
+      - name: 📤 Subir HTML como artefacto (sin PDF)
+        if: ${{ inputs.generate_html_report && !inputs.generate_pdf_report }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-reportes
+          path: docs/${{ inputs.html_report_name }}
+          if-no-files-found: warn
 
   report_pdf:
     name: Generate PDF report
@@ -3449,7 +3460,8 @@ jobs:
         with:
           path: docs/${{ inputs.pdf_report_name }}
           key: dep-report-${{ github.run_id }}-pdf
-      - name: 📤 Subir reportes combinados
+      - name: 📤 Subir reportes combinados (HTML+PDF)
+        if: ${{ inputs.generate_pdf_report && needs.report_pdf.outputs.pdf_created == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: dependabot-reportes
