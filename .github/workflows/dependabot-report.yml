@@ -769,41 +769,8 @@ jobs:
           brand_done = False
           company = (os.getenv('COMPANY_NAME','PRB') or 'PRB').strip()
           html_custom = ''
-          try:
-              import urllib.request, tempfile, os
-              from svglib.svglib import svg2rlg
-              logo_url = os.getenv('LOGO_URL', 'https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg')
-              svg_path = None
-              try:
-                  tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
-                  tmp.write(urllib.request.urlopen(logo_url, timeout=5).read())
-                  tmp.flush()
-                  svg_path = tmp.name
-              except Exception:
-                  for candidate in [
-                      "docs/logo.svg", "assets/logo.svg", ".github/logo.svg",
-                      "docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"
-                  ]:
-                      if os.path.exists(candidate):
-                          svg_path = candidate
-                          break
-              if svg_path:
-                  drawing = svg2rlg(svg_path)
-                  target_h = 32.0
-                  if getattr(drawing, 'height', None):
-                      scale = target_h / float(drawing.height or target_h)
-                      if scale > 0:
-                          drawing.width *= scale
-                          drawing.height *= scale
-                          drawing.scale(scale, scale)
-                  brand_tbl = Table([[drawing]], colWidths=[getattr(drawing, 'width', 32.0)])
-                  brand_tbl.hAlign = 'CENTER'
-                  flow.append(brand_tbl)
-                  flow.append(Paragraph(company, Heading2Center))
-                  flow.append(Spacer(1,6))
-                  brand_done = True
-          except Exception:
-              pass
+          flow.append(Paragraph(company, Heading2Center))
+          flow.append(Spacer(1,6))
           title = Paragraph('Reporte de Dependabot', TitleCenter)
           flow.append(title)
           flow.append(Spacer(1,12))
@@ -2971,41 +2938,8 @@ jobs:
           brand_done = False
           company = (os.getenv('COMPANY_NAME','PRB') or 'PRB').strip()
           html_custom = ''
-          try:
-              import urllib.request, tempfile, os
-              from svglib.svglib import svg2rlg
-              logo_url = os.getenv('LOGO_URL', 'https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg')
-              svg_path = None
-              try:
-                  tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
-                  tmp.write(urllib.request.urlopen(logo_url, timeout=5).read())
-                  tmp.flush()
-                  svg_path = tmp.name
-              except Exception:
-                  for candidate in [
-                      "docs/logo.svg", "assets/logo.svg", ".github/logo.svg",
-                      "docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"
-                  ]:
-                      if os.path.exists(candidate):
-                          svg_path = candidate
-                          break
-              if svg_path:
-                  drawing = svg2rlg(svg_path)
-                  target_h = 32.0
-                  if getattr(drawing, 'height', None):
-                      scale = target_h / float(drawing.height or target_h)
-                      if scale > 0:
-                          drawing.width *= scale
-                          drawing.height *= scale
-                          drawing.scale(scale, scale)
-                  brand_tbl = Table([[drawing]], colWidths=[getattr(drawing, 'width', 32.0)])
-                  brand_tbl.hAlign = 'CENTER'
-                  flow.append(brand_tbl)
-                  flow.append(Paragraph(company, Heading2Center))
-                  flow.append(Spacer(1,6))
-                  brand_done = True
-          except Exception:
-              pass
+          flow.append(Paragraph(company, Heading2Center))
+          flow.append(Spacer(1,6))
           title = Paragraph('Reporte de Dependabot', TitleCenter)
           flow.append(title)
           flow.append(Spacer(1,12))
