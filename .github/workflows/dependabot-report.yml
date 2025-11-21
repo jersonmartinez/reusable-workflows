@@ -3309,20 +3309,14 @@ jobs:
         with:
           path: docs/${{ inputs.pdf_report_name }}
           key: dep-report-${{ github.run_id }}-pdf
-      - name: 📤 Subir HTML al artefacto combinado
-        if: ${{ inputs.generate_html_report }}
+      - name: 📤 Subir reportes combinados
         uses: actions/upload-artifact@v4
         with:
           name: dependabot-reportes
-          path: docs/${{ inputs.html_report_name }}
-          if-no-files-found: error
-      - name: 📤 Subir PDF al artefacto combinado
-        if: ${{ inputs.generate_pdf_report && needs.report_pdf.outputs.pdf_created == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependabot-reportes
-          path: docs/${{ inputs.pdf_report_name }}
-          if-no-files-found: error
+          path: |
+            docs/${{ inputs.html_report_name }}
+            docs/${{ inputs.pdf_report_name }}
+          if-no-files-found: warn
       - name: 💬 Comentar Issue con enlaces a reportes
         env:
           GH_TOKEN: ${{ github.token }}
