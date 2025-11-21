@@ -2871,6 +2871,7 @@ jobs:
           ALERTS_JSON: ${{ needs.configure.outputs.alerts_data }}
         run: |
           python3 -m pip install --user reportlab || true
+          python3 -m pip install --user svglib || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
           python3 - << 'PY'
           import json, os
@@ -2978,6 +2979,29 @@ jobs:
                   except Exception:
                       pass
               return 'unknown'
+          def sanitize_dir_path(s, eco_hint=''):
+              try:
+                  d = (s or '/').strip().replace('\\','/')
+                  if not d:
+                      d = '/'
+                  if d == '/':
+                      return '/'
+                  eco = (eco_hint or '').lower()
+                  eco = 'github-actions' if eco == 'github_actions' else eco
+                  if d.startswith('/main/') or d == '/main':
+                      return '/.github/workflows' if eco == 'github-actions' else '/'
+                  if ' ' in d:
+                      return '/.github/workflows' if eco == 'github-actions' else '/'
+                  first = d.split('/')[1] if d.startswith('/') and len(d.split('/'))>1 else d.split('/')[0]
+                  if eco == 'github-actions' and first in ['actions','appleboy','main']:
+                      return '/.github/workflows'
+                  if '/main' in d:
+                      parts = [seg for seg in d.split('/') if seg and seg != 'main']
+                      d2 = '/' + '/'.join(parts)
+                      return '/' if d2 == '/' else d2
+                  return d
+              except Exception:
+                  return '/'
           def current_state_for(pr):
               st = (pr.get('state','open') or '').lower()
               if st != 'closed':
@@ -3121,7 +3145,9 @@ jobs:
               flow.append(Spacer(1,6))
               dir_pr_counts = {}
               for pr in prs:
-                  d = directory_of(pr)
+                  e = ecosystem_of(pr)
+                  d_raw = directory_of(pr)
+                  d = sanitize_dir_path(d_raw, e)
                   dir_pr_counts[d] = dir_pr_counts.get(d,0)+1
               alerts_dir_counts = {}
               for a in alerts:
