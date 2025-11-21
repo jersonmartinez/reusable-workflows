@@ -749,7 +749,7 @@ jobs:
           try:
               from reportlab.lib.pagesizes import A4
               from reportlab.lib import colors
-              from reportlab.lib.styles import getSampleStyleSheet
+              from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
               from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, ListFlowable, ListItem
           except Exception as e:
               # Fallback: sin reportlab, evita fallo y marca no creado
@@ -766,6 +766,8 @@ jobs:
           pdf_path = os.getenv('PDF_PATH','docs/dependabot-report.pdf')
           os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
           styles = getSampleStyleSheet()
+          TitleCenter = ParagraphStyle('TitleCenter', parent=styles['Title'], alignment=1)
+          Heading2Center = ParagraphStyle('Heading2Center', parent=styles['Heading2'], alignment=1)
           doc = SimpleDocTemplate(pdf_path, pagesize=A4)
           flow = []
           brand_done = False
@@ -798,18 +800,17 @@ jobs:
                           drawing.width *= scale
                           drawing.height *= scale
                           drawing.scale(scale, scale)
-                  brand_tbl = Table([[drawing, Paragraph(company, styles['Heading2'])]], colWidths=[target_h, doc.width - target_h])
+                  brand_tbl = Table([[drawing, Paragraph(company, Heading2Center)]])
+                  brand_tbl.hAlign = 'CENTER'
+                  brand_tbl.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('ALIGN',(1,0),(1,0),'CENTER')]))
                   flow.append(brand_tbl)
                   flow.append(Spacer(1,6))
                   brand_done = True
           except Exception:
               pass
-          title = Paragraph('Reporte de Dependabot', styles['Title'])
+          title = Paragraph('Reporte de Dependabot', TitleCenter)
           flow.append(title)
           flow.append(Spacer(1,12))
-          if html_custom and html_custom.strip() != '':
-              flow.append(Paragraph(html_custom, styles['Normal']))
-              flow.append(Spacer(1,12))
           ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
           
           flow.append(Spacer(1,12))
@@ -1949,6 +1950,7 @@ jobs:
           html_str = html_str.replace('>PRB</a>', f'>{company}</a>')
           html_str = html_str.replace('<strong>PRB</strong>', f'<strong>{company}</strong>')
           html_str = html_str.replace('https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg', logo_url)
+          html_str = html_str.replace('<li class="nav-item"><a class="nav-link" href="#prioridad">Prioridad</a></li>', '')
           if custom and custom.strip() != '':
               html_str = html_str.replace('<div class="container my-4">', f'<div class="container my-4"><div class="alert alert-secondary">{custom}</div>')
           with open(html_path,'w',encoding='utf-8') as f:
@@ -2911,6 +2913,7 @@ jobs:
           html_str = html_str.replace('>PRB</a>', f'>{company}</a>')
           html_str = html_str.replace('<strong>PRB</strong>', f'<strong>{company}</strong>')
           html_str = html_str.replace('https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg', logo_url)
+          html_str = html_str.replace('<li class="nav-item"><a class="nav-link" href="#prioridad">Prioridad</a></li>', '')
           if custom and custom.strip() != '':
               html_str = html_str.replace('<div class="container my-4">', f'<div class="container my-4"><div class="alert alert-secondary">{custom}</div>')
           with open(html_path,'w',encoding='utf-8') as f:
@@ -2957,7 +2960,7 @@ jobs:
           try:
               from reportlab.lib.pagesizes import A4
               from reportlab.lib import colors
-              from reportlab.lib.styles import getSampleStyleSheet
+              from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
               from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, ListFlowable, ListItem
           except Exception as e:
               out = os.environ.get('GITHUB_OUTPUT')
@@ -2979,6 +2982,8 @@ jobs:
           pdf_path = os.getenv('PDF_PATH','docs/dependabot-report.pdf')
           os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
           styles = getSampleStyleSheet()
+          TitleCenter = ParagraphStyle('TitleCenter', parent=styles['Title'], alignment=1)
+          Heading2Center = ParagraphStyle('Heading2Center', parent=styles['Heading2'], alignment=1)
           doc = SimpleDocTemplate(pdf_path, pagesize=A4)
           flow = []
           brand_done = False
@@ -3011,18 +3016,17 @@ jobs:
                           drawing.width *= scale
                           drawing.height *= scale
                           drawing.scale(scale, scale)
-                  brand_tbl = Table([[drawing, Paragraph(company, styles['Heading2'])]], colWidths=[target_h, doc.width - target_h])
+                  brand_tbl = Table([[drawing, Paragraph(company, Heading2Center)]])
+                  brand_tbl.hAlign = 'CENTER'
+                  brand_tbl.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('ALIGN',(1,0),(1,0),'CENTER')]))
                   flow.append(brand_tbl)
                   flow.append(Spacer(1,6))
                   brand_done = True
           except Exception:
               pass
-          title = Paragraph('Reporte de Dependabot', styles['Title'])
+          title = Paragraph('Reporte de Dependabot', TitleCenter)
           flow.append(title)
           flow.append(Spacer(1,12))
-          if html_custom and html_custom.strip() != '':
-              flow.append(Paragraph(html_custom, styles['Normal']))
-              flow.append(Spacer(1,12))
           ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
           import re
           def parse_title(t):
