@@ -1982,6 +1982,7 @@ jobs:
           MAX_SUMMARY: ${{ inputs.max_prs_in_summary }}
           FAST_SUMMARY: ${{ inputs.fast_summary }}
           COMPANY_NAME: ${{ inputs.company_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           cat > /tmp/generate_summary.py << 'SCRIPT_EOF'
           # Genera el summary del job con tablas, badges y agrupación por directorio
