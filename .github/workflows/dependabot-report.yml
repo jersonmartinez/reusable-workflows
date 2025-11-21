@@ -722,8 +722,7 @@ jobs:
           ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
         run: |
           python3 -m pip install --user reportlab || true
-          python3 -m pip install --user svglib || true
-          python3 -m pip install --user svglib || true
+          python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
           python3 - << 'PY'
           # Genera un PDF con índice y métricas por tipo, directorio y ecosistema
@@ -754,24 +753,33 @@ jobs:
           flow = []
           brand_done = False
           try:
-              import urllib.request, tempfile
+              import urllib.request, tempfile, os
               from svglib.svglib import svg2rlg
               logo_url = "https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg"
-              tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
-              tmp.write(urllib.request.urlopen(logo_url).read())
-              tmp.flush()
-              drawing = svg2rlg(tmp.name)
-              target_h = 24.0
-              if getattr(drawing, 'height', None):
-                  scale = target_h / float(drawing.height or target_h)
-                  if scale > 0:
-                      drawing.width *= scale
-                      drawing.height *= scale
-                      drawing.scale(scale, scale)
-              brand_tbl = Table([[drawing, Paragraph('PRB', styles['Heading2'])]], colWidths=[target_h, doc.width - target_h])
-              flow.append(brand_tbl)
-              flow.append(Spacer(1,6))
-              brand_done = True
+              svg_path = None
+              try:
+                  tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
+                  tmp.write(urllib.request.urlopen(logo_url, timeout=5).read())
+                  tmp.flush()
+                  svg_path = tmp.name
+              except Exception:
+                  for candidate in ["docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"]:
+                      if os.path.exists(candidate):
+                          svg_path = candidate
+                          break
+              if svg_path:
+                  drawing = svg2rlg(svg_path)
+                  target_h = 32.0
+                  if getattr(drawing, 'height', None):
+                      scale = target_h / float(drawing.height or target_h)
+                      if scale > 0:
+                          drawing.width *= scale
+                          drawing.height *= scale
+                          drawing.scale(scale, scale)
+                  brand_tbl = Table([[drawing, Paragraph('PRB', styles['Heading2'])]], colWidths=[target_h, doc.width - target_h])
+                  flow.append(brand_tbl)
+                  flow.append(Spacer(1,6))
+                  brand_done = True
           except Exception:
               pass
           title = Paragraph('Reporte de Dependabot', styles['Title'])
@@ -1852,7 +1860,7 @@ jobs:
           html.append('<div class="container py-4">')
           html.append('<div class="row">')
           html.append('<div class="col-md-4 mb-3">')
-          html.append('<div class="d-flex align-items-center"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2"><strong>PRB</strong></div>')
+          html.append('<div class="d-flex align-items-center"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="36" class="me-2"><strong>PRB</strong></div>')
           html.append('<div class="w-100 small text-muted mt-2">Creado con ❤️ por el equipo de DevOps</div>')
           html.append('</div>')
           html.append('<div class="col-6 col-md-4 mb-3">')
@@ -2802,7 +2810,7 @@ jobs:
           html.append('<div class="container py-4">')
           html.append('<div class="row">')
           html.append('<div class="col-md-4 mb-3">')
-          html.append('<div class="d-flex align-items-center"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="24" class="me-2"><strong>PRB</strong></div>')
+          html.append('<div class="d-flex align-items-center"><img src="https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg" alt="PRB" height="36" class="me-2"><strong>PRB</strong></div>')
           html.append('<div class="w-100 small text-muted mt-2">Creado con ❤️ por el equipo de DevOps</div>')
           html.append('</div>')
           html.append('<div class="col-6 col-md-4 mb-3">')
@@ -2871,7 +2879,7 @@ jobs:
           ALERTS_JSON: ${{ needs.configure.outputs.alerts_data }}
         run: |
           python3 -m pip install --user reportlab || true
-          python3 -m pip install --user svglib || true
+          python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
           python3 - << 'PY'
           import json, os
@@ -2906,24 +2914,33 @@ jobs:
           flow = []
           brand_done = False
           try:
-              import urllib.request, tempfile
+              import urllib.request, tempfile, os
               from svglib.svglib import svg2rlg
               logo_url = "https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg"
-              tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
-              tmp.write(urllib.request.urlopen(logo_url).read())
-              tmp.flush()
-              drawing = svg2rlg(tmp.name)
-              target_h = 24.0
-              if getattr(drawing, 'height', None):
-                  scale = target_h / float(drawing.height or target_h)
-                  if scale > 0:
-                      drawing.width *= scale
-                      drawing.height *= scale
-                      drawing.scale(scale, scale)
-              brand_tbl = Table([[drawing, Paragraph('PRB', styles['Heading2'])]], colWidths=[target_h, doc.width - target_h])
-              flow.append(brand_tbl)
-              flow.append(Spacer(1,6))
-              brand_done = True
+              svg_path = None
+              try:
+                  tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
+                  tmp.write(urllib.request.urlopen(logo_url, timeout=5).read())
+                  tmp.flush()
+                  svg_path = tmp.name
+              except Exception:
+                  for candidate in ["docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"]:
+                      if os.path.exists(candidate):
+                          svg_path = candidate
+                          break
+              if svg_path:
+                  drawing = svg2rlg(svg_path)
+                  target_h = 32.0
+                  if getattr(drawing, 'height', None):
+                      scale = target_h / float(drawing.height or target_h)
+                      if scale > 0:
+                          drawing.width *= scale
+                          drawing.height *= scale
+                          drawing.scale(scale, scale)
+                  brand_tbl = Table([[drawing, Paragraph('PRB', styles['Heading2'])]], colWidths=[target_h, doc.width - target_h])
+                  flow.append(brand_tbl)
+                  flow.append(Spacer(1,6))
+                  brand_done = True
           except Exception:
               pass
           title = Paragraph('Reporte de Dependabot', styles['Title'])
