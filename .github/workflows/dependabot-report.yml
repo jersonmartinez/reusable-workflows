@@ -736,6 +736,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_URL: ${{ steps.create_issue.outputs.issue_url }}
         run: |
+          sudo apt-get update -y || true
+          sudo apt-get install -y libcairo2 libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev pkg-config || true
           python3 -m pip install --user reportlab || true
           python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
@@ -1273,13 +1275,15 @@ jobs:
           labels_url = f"{server_url}/{repo_url}/labels"
           prs_url = f"{server_url}/{repo_url}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
           advisories_url = f"{server_url}/{repo_url}/security/dependabot"
+          doc_url = f"{server_url}/{repo_url}/blob/main/docs/security/dependency-check/dependabot-report.md"
           links_tbl = [['Nombre','Enlace'],
                        ['Ver Configuración', Paragraph(f"<link href='{config_url}'><font color='blue'>Config</font></link>", styles['Normal'])],
                        ['Security Settings', Paragraph(f"<link href='{security_url}'><font color='blue'>Security</font></link>", styles['Normal'])],
                        ['Dependency Graph', Paragraph(f"<link href='{insights_url}'><font color='blue'>Graph</font></link>", styles['Normal'])],
                        ['Labels', Paragraph(f"<link href='{labels_url}'><font color='blue'>Labels</font></link>", styles['Normal'])],
                        ['PRs de Dependabot', Paragraph(f"<link href='{prs_url}'><font color='blue'>PRs</font></link>", styles['Normal'])],
-                       ['Security Alerts', Paragraph(f"<link href='{advisories_url}'><font color='blue'>Alerts</font></link>", styles['Normal'])]]
+                       ['Security Alerts', Paragraph(f"<link href='{advisories_url}'><font color='blue'>Alerts</font></link>", styles['Normal'])],
+                       ['Documentación', Paragraph(f"<link href='{doc_url}'><font color='blue'>Doc</font></link>", styles['Normal'])]]
           tbl_links = Table(links_tbl, repeatRows=1, colWidths=[doc.width/3, doc.width*2/3])
           tbl_links.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.lightgrey),('GRID',(0,0),(-1,-1),0.5,colors.grey),('FONTNAME',(0,0),(-1,0),'Helvetica-Bold')]))
           flow.append(tbl_links)
@@ -1901,6 +1905,7 @@ jobs:
               html.append(f'<li class="mb-1"><a href="{org_link}" target="_blank" rel="noopener" class="text-decoration-none">🏢 Organización</a></li>')
           if run_link:
               html.append(f'<li class="mb-1"><a href="{run_link}" target="_blank" rel="noopener" class="text-decoration-none">⚙️ GitHub Actions (artefactos PDF/HTML)</a></li>')
+          html.append(f'<li class="mb-1"><a href="{server_url}/{repo}/blob/main/docs/security/dependency-check/dependabot-report.md" target="_blank" rel="noopener" class="text-decoration-none">📘 Documentación del workflow reusable</a></li>')
           html.append('</ul>')
           html.append('</div>')
           html.append('<div class="col-6 col-md-4 mb-3">')
@@ -2271,12 +2276,14 @@ jobs:
           labels_url = f"{server_url}/{repo}/labels"
           prs_url = f"{server_url}/{repo}/pulls?q=is%3Apr+author%3Aapp%2Fdependabot"
           advisories_url = f"{server_url}/{repo}/security/dependabot"
+          doc_url = f"{server_url}/{repo}/blob/main/docs/security/dependency-check/dependabot-report.md"
           summary.append(f"- 📝 <a href='{config_url}'><b>Ver Configuración</b></a>\n")
           summary.append(f"- 🛡️ <a href='{security_url}'><b>Security Settings</b></a>\n")
           summary.append(f"- 📊 <a href='{insights_url}'><b>Dependency Graph</b></a>\n")
           summary.append(f"- 🏷️ <a href='{labels_url}'><b>Gestionar Labels</b></a>\n")
           summary.append(f"- 🔄 <a href='{prs_url}'><b>PRs de Dependabot</b></a>\n")
-          summary.append(f"- 🚨 <a href='{advisories_url}'><b>Security Alerts</b></a>\n\n")
+          summary.append(f"- 🚨 <a href='{advisories_url}'><b>Security Alerts</b></a>\n")
+          summary.append(f"- 📘 <a href='{doc_url}'><b>Documentación del workflow reusable</b></a>\n\n")
           summary.append("</details>\n\n")
 
           summary.append("<details>\n")
@@ -2872,6 +2879,7 @@ jobs:
               html.append(f'<li class="mb-1"><a href="{org_link}" target="_blank" rel="noopener" class="text-decoration-none">🏢 Organización</a></li>')
           if run_link:
               html.append(f'<li class="mb-1"><a href="{run_link}" target="_blank" rel="noopener" class="text-decoration-none">⚙️ GitHub Actions (artefactos PDF/HTML)</a></li>')
+          html.append(f'<li class="mb-1"><a href="{server_url}/{repo}/blob/main/docs/security/dependency-check/dependabot-report.md" target="_blank" rel="noopener" class="text-decoration-none">📘 Documentación del workflow reusable</a></li>')
           html.append('</ul>')
           html.append('</div>')
           html.append('<div class="col-6 col-md-4 mb-3">')
@@ -2937,6 +2945,8 @@ jobs:
           HTML_CUSTOM_DATA: ${{ inputs.html_custom_data }}
           LOGO_URL: ${{ inputs.logo_url }}
         run: |
+          sudo apt-get update -y || true
+          sudo apt-get install -y libcairo2 libcairo2-dev libpango1.0-dev libgdk-pixbuf2.0-dev pkg-config || true
           python3 -m pip install --user reportlab || true
           python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
