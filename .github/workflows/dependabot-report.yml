@@ -772,8 +772,8 @@ jobs:
           company = (os.getenv('COMPANY_NAME','PRB') or 'PRB').strip()
           html_custom = os.getenv('HTML_CUSTOM_DATA','')
           try:
-            import urllib.request, tempfile, os
-            from svglib.svglib import svg2rlg
+              import urllib.request, tempfile, os
+              from svglib.svglib import svg2rlg
               logo_url = os.getenv('LOGO_URL', 'https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg')
               svg_path = None
               try:
@@ -783,8 +783,8 @@ jobs:
                   svg_path = tmp.name
               except Exception:
                   for candidate in [
-                    "docs/logo.svg", "assets/logo.svg", ".github/logo.svg",
-                    "docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"
+                      "docs/logo.svg", "assets/logo.svg", ".github/logo.svg",
+                      "docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"
                   ]:
                       if os.path.exists(candidate):
                           svg_path = candidate
@@ -2985,9 +2985,9 @@ jobs:
           company = (os.getenv('COMPANY_NAME','PRB') or 'PRB').strip()
           html_custom = os.getenv('HTML_CUSTOM_DATA','')
           try:
-            import urllib.request, tempfile, os
-            from svglib.svglib import svg2rlg
-            logo_url = os.getenv('LOGO_URL', 'https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg')
+              import urllib.request, tempfile, os
+              from svglib.svglib import svg2rlg
+              logo_url = os.getenv('LOGO_URL', 'https://extranet.prb.com.mx/Prb1.2/images/logos/logo_PRB.svg')
               svg_path = None
               try:
                   tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".svg")
@@ -2996,8 +2996,8 @@ jobs:
                   svg_path = tmp.name
               except Exception:
                   for candidate in [
-                    "docs/logo.svg", "assets/logo.svg", ".github/logo.svg",
-                    "docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"
+                      "docs/logo.svg", "assets/logo.svg", ".github/logo.svg",
+                      "docs/logo_PRB.svg", "assets/logo_PRB.svg", ".github/logo_PRB.svg"
                   ]:
                       if os.path.exists(candidate):
                           svg_path = candidate
