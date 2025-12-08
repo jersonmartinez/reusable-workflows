@@ -1,0 +1,24 @@
+body { padding-top: 64px; }
+.badge-ver { font-size: 0.85rem; }
+.section-card { border: 1px solid var(--bs-border-color); border-radius: .75rem; padding: 1rem; margin-bottom: 1rem; background: var(--bs-tertiary-bg); transition: box-shadow .15s ease, transform .15s ease; }
+.section-card:hover { box-shadow: 0 .5rem 1rem rgba(0,0,0,.2); transform: translateY(-2px); border-color: var(--bs-primary); }
+.table-responsive { max-height: 540px; overflow: auto; }
+.table thead th { position: sticky; top: 0; background: var(--bs-tertiary-bg); z-index: 1; }
+.table tbody tr { transition: background-color .15s ease, color .15s ease; }
+.table tbody tr:hover { background-color: var(--bs-secondary-bg); color: var(--bs-body-color); }
+.table tbody tr:hover a { color: var(--bs-body-color); text-decoration: none; }
+.list-group-item { transition: background-color .15s ease, color .15s ease; }
+.list-group-item:hover { background-color: var(--bs-secondary-bg); color: var(--bs-body-color); }
+.kpi { border-radius: .75rem; padding: 1rem; background: var(--bs-tertiary-bg); border: 1px solid var(--bs-border-color); transition: box-shadow .15s ease, transform .15s ease, color .15s ease; }
+.kpi:hover { box-shadow: 0 .5rem 1rem rgba(0,0,0,.25); transform: translateY(-2px); color: var(--bs-body-color); }
+.kpi.kpi-primary { border-left: 4px solid var(--bs-primary); }
+.kpi.kpi-warning { border-left: 4px solid var(--bs-warning); }
+.kpi.kpi-success { border-left: 4px solid var(--bs-success); }
+.kpi.kpi-danger { border-left: 4px solid var(--bs-danger); }
+.navbar { border-bottom: 0 !important; box-shadow: none !important; }
+.navbar .nav-link { transition: color .2s ease, opacity .2s ease, text-shadow .15s ease; }
+.navbar .nav-link:hover { color: var(--bs-primary); opacity: .95; text-shadow: 0 0 2px rgba(255,255,255,.25); }
+.accordion-button { transition: background-color .15s ease, color .15s ease; }
+.accordion-button:hover { background-color: var(--bs-secondary-bg); color: var(--bs-body-color); }
+a { transition: color .2s ease, text-shadow .15s ease; }
+a:hover { color: var(--bs-primary); text-shadow: 0 0 2px rgba(255,255,255,.2); }
