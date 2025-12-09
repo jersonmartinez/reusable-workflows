@@ -156,12 +156,13 @@ jobs:
           repository: ${{ steps.workflow_ref.outputs.repo }}
           ref: ${{ steps.workflow_ref.outputs.ref }}
           path: .reusable-scripts
-          sparse-checkout: scripts
 
       - name: 🕵️ Debug Scripts Existence
         run: |
           echo "Listing .reusable-scripts content:"
           ls -R .reusable-scripts || echo ".reusable-scripts not found"
+          echo "Listing root scripts (if any):"
+          ls -R scripts || echo "scripts not found in root"
 
       - name: 🕒 Marcar inicio
         if: false
@@ -408,11 +409,17 @@ jobs:
           PRS_STATE: ${{ inputs.prs_state }}
           TRIGGER_DEPENDABOT_NOW: ${{ inputs.trigger_dependabot_now }}
         run: |
-          if [ ! -f .reusable-scripts/scripts/detect_prs.py ]; then
-            echo "::error::Script not found at .reusable-scripts/scripts/detect_prs.py. Ensure the 'scripts' folder is pushed to the referenced branch/tag."
-            exit 1
+          SCRIPT_PATH=".reusable-scripts/scripts/detect_prs.py"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+            if [ -f "scripts/detect_prs.py" ]; then
+              SCRIPT_PATH="scripts/detect_prs.py"
+              echo "Using local scripts/ fallback"
+            else
+              echo "::error::Script not found at $SCRIPT_PATH. Ensure 'scripts/' is pushed."
+              exit 1
+            fi
           fi
-          python3 .reusable-scripts/scripts/detect_prs.py
+          python3 "$SCRIPT_PATH"
 
       - name: 📦 Recoger alertas de Dependabot
         id: collect_alerts
@@ -456,11 +463,16 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           SERVER_URL: ${{ github.server_url }}
         run: |
-          if [ ! -f .reusable-scripts/scripts/create_issue.py ]; then
-            echo "::error::Script not found at .reusable-scripts/scripts/create_issue.py"
-            exit 1
+          SCRIPT_PATH=".reusable-scripts/scripts/create_issue.py"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+            if [ -f "scripts/create_issue.py" ]; then
+              SCRIPT_PATH="scripts/create_issue.py"
+            else
+              echo "::error::Script not found at $SCRIPT_PATH"
+              exit 1
+            fi
           fi
-          python3 .reusable-scripts/scripts/create_issue.py
+          python3 "$SCRIPT_PATH"
 
       - name: 📄 Generar PDF del reporte
         id: generate_pdf
@@ -477,7 +489,17 @@ jobs:
           python3 -m pip install --user reportlab || true
           python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
-          python3 .reusable-scripts/scripts/generate_pdf.py
+          
+          SCRIPT_PATH=".reusable-scripts/scripts/generate_pdf.py"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+             if [ -f "scripts/generate_pdf.py" ]; then
+               SCRIPT_PATH="scripts/generate_pdf.py"
+             else
+               echo "::error::Script not found at $SCRIPT_PATH"
+               exit 1
+             fi
+          fi
+          python3 "$SCRIPT_PATH"
 
       - name: 📊 Generate Summary
         env:
@@ -490,11 +512,16 @@ jobs:
           COMPANY_NAME: ${{ inputs.company_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f .reusable-scripts/scripts/generate_summary.py ]; then
-            echo "::error::Script not found at .reusable-scripts/scripts/generate_summary.py"
-            exit 1
+          SCRIPT_PATH=".reusable-scripts/scripts/generate_summary.py"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+            if [ -f "scripts/generate_summary.py" ]; then
+              SCRIPT_PATH="scripts/generate_summary.py"
+            else
+              echo "::error::Script not found at $SCRIPT_PATH"
+              exit 1
+            fi
           fi
-          python3 .reusable-scripts/scripts/generate_summary.py
+          python3 "$SCRIPT_PATH"
 
       - name: 💾 Subir artifact de depuración
         if: ${{ inputs.upload_debug_artifact }}
@@ -565,7 +592,6 @@ jobs:
           repository: ${{ steps.workflow_ref.outputs.repo }}
           ref: ${{ steps.workflow_ref.outputs.ref }}
           path: .reusable-scripts
-          sparse-checkout: scripts
 
       - name: 🕵️ Debug Scripts Existence
         run: |
@@ -587,8 +613,13 @@ jobs:
           python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
           
-          if [ ! -f .reusable-scripts/scripts/generate_pdf.py ]; then
-            echo "::error::Script not found at .reusable-scripts/scripts/generate_pdf.py"
-            exit 1
+          SCRIPT_PATH=".reusable-scripts/scripts/generate_pdf.py"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+            if [ -f "scripts/generate_pdf.py" ]; then
+              SCRIPT_PATH="scripts/generate_pdf.py"
+            else
+              echo "::error::Script not found at $SCRIPT_PATH"
+              exit 1
+            fi
           fi
-          python3 .reusable-scripts/scripts/generate_pdf.py
+          python3 "$SCRIPT_PATH"
