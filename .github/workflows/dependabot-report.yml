@@ -410,6 +410,9 @@ jobs:
           TRIGGER_DEPENDABOT_NOW: ${{ inputs.trigger_dependabot_now }}
         run: |
           SCRIPT_PATH=".reusable-scripts/scripts/detect_prs.py"
+          if [ ! -f "$SCRIPT_PATH" ] && [ -f "scripts/detect_prs.py" ]; then
+            SCRIPT_PATH="scripts/detect_prs.py"
+          fi
           # Fallback: Create script if missing (e.g. not pushed yet)
           if [ ! -f "$SCRIPT_PATH" ]; then
             echo "::warning::Script not found at $SCRIPT_PATH. Using inline fallback."
@@ -605,6 +608,9 @@ jobs:
           SERVER_URL: ${{ github.server_url }}
         run: |
           SCRIPT_PATH=".reusable-scripts/scripts/create_issue.py"
+          if [ ! -f "$SCRIPT_PATH" ] && [ -f "scripts/create_issue.py" ]; then
+            SCRIPT_PATH="scripts/create_issue.py"
+          fi
           if [ ! -f "$SCRIPT_PATH" ]; then
             echo "::warning::Script not found at $SCRIPT_PATH. Using inline fallback."
             mkdir -p .reusable-scripts/scripts
@@ -782,6 +788,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           SCRIPT_PATH=".reusable-scripts/scripts/generate_summary.py"
+          if [ ! -f "$SCRIPT_PATH" ] && [ -f "scripts/generate_summary.py" ]; then
+            SCRIPT_PATH="scripts/generate_summary.py"
+          fi
           if [ ! -f "$SCRIPT_PATH" ]; then
             echo "::warning::Script not found at $SCRIPT_PATH. Using inline fallback."
             mkdir -p .reusable-scripts/scripts
