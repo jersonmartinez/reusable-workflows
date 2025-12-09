@@ -158,6 +158,11 @@ jobs:
           path: .reusable-scripts
           sparse-checkout: scripts
 
+      - name: 🕵️ Debug Scripts Existence
+        run: |
+          echo "Listing .reusable-scripts content:"
+          ls -R .reusable-scripts || echo ".reusable-scripts not found"
+
       - name: 🕒 Marcar inicio
         if: false
         run: echo "skip"
@@ -402,7 +407,12 @@ jobs:
           DEP_LOGINS: ${{ inputs.dependabot_logins }}
           PRS_STATE: ${{ inputs.prs_state }}
           TRIGGER_DEPENDABOT_NOW: ${{ inputs.trigger_dependabot_now }}
-        run: python3 .reusable-scripts/scripts/detect_prs.py
+        run: |
+          if [ ! -f .reusable-scripts/scripts/detect_prs.py ]; then
+            echo "::error::Script not found at .reusable-scripts/scripts/detect_prs.py. Ensure the 'scripts' folder is pushed to the referenced branch/tag."
+            exit 1
+          fi
+          python3 .reusable-scripts/scripts/detect_prs.py
 
       - name: 📦 Recoger alertas de Dependabot
         id: collect_alerts
@@ -445,7 +455,12 @@ jobs:
           ISSUE_LABELS: ${{ inputs.issue_labels }}
           RUN_ID: ${{ github.run_id }}
           SERVER_URL: ${{ github.server_url }}
-        run: python3 .reusable-scripts/scripts/create_issue.py
+        run: |
+          if [ ! -f .reusable-scripts/scripts/create_issue.py ]; then
+            echo "::error::Script not found at .reusable-scripts/scripts/create_issue.py"
+            exit 1
+          fi
+          python3 .reusable-scripts/scripts/create_issue.py
 
       - name: 📄 Generar PDF del reporte
         id: generate_pdf
@@ -462,7 +477,7 @@ jobs:
           python3 -m pip install --user reportlab || true
           python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
-          python3 scripts/generate_pdf.py
+          python3 .reusable-scripts/scripts/generate_pdf.py
 
       - name: 📊 Generate Summary
         env:
@@ -474,7 +489,12 @@ jobs:
           FAST_SUMMARY: ${{ inputs.fast_summary }}
           COMPANY_NAME: ${{ inputs.company_name }}
           GH_TOKEN: ${{ github.token }}
-        run: python3 .reusable-scripts/scripts/generate_summary.py
+        run: |
+          if [ ! -f .reusable-scripts/scripts/generate_summary.py ]; then
+            echo "::error::Script not found at .reusable-scripts/scripts/generate_summary.py"
+            exit 1
+          fi
+          python3 .reusable-scripts/scripts/generate_summary.py
 
       - name: 💾 Subir artifact de depuración
         if: ${{ inputs.upload_debug_artifact }}
@@ -547,6 +567,11 @@ jobs:
           path: .reusable-scripts
           sparse-checkout: scripts
 
+      - name: 🕵️ Debug Scripts Existence
+        run: |
+          echo "Listing .reusable-scripts content:"
+          ls -R .reusable-scripts || echo ".reusable-scripts not found"
+
       - name: 📄 Generar PDF del reporte (parallel)
         id: generate_pdf
         env:
@@ -561,4 +586,9 @@ jobs:
           python3 -m pip install --user reportlab || true
           python3 -m pip install --user svglib lxml cssselect2 tinycss2 || true
           export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())')${PYTHONPATH:+:$PYTHONPATH}"
+          
+          if [ ! -f .reusable-scripts/scripts/generate_pdf.py ]; then
+            echo "::error::Script not found at .reusable-scripts/scripts/generate_pdf.py"
+            exit 1
+          fi
           python3 .reusable-scripts/scripts/generate_pdf.py
